@@ -53,6 +53,7 @@ def load_models():
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         pipe.to(device)
         pipe.enable_attention_slicing()
+        pipe.enable_vae_slicing()
         # pipe.enable_model_cpu_offload() # Uncomment if memory is still an issue
         print(f"[AI Engine] Models loaded successfully using {model_dtype}.")
     except Exception as e:
@@ -112,11 +113,19 @@ def _generate_interior_logic(image_path: str, style: str, room_type: str) -> str
     load_models()
     if pipe is None:
         raise RuntimeError(
-            "AI Models were not initialized correctly. Please check backend logs."
+            "AI Models were not initialized correctly. Please check api logs."
         )
 
     # Actual inference logic
     image = load_image(image_path).convert("RGB")
+    print(f"[AI Engine] Original image size: {image.size}")
+
+    # Resize image to a manageable size for SD 1.5 on MPS (max 768 on the long side recommended)
+    max_size = 768
+    if max(image.size) > max_size:
+        print(f"[AI Engine] Resizing image from {image.size} to max {max_size}px")
+        image.thumbnail((max_size, max_size), Image.LANCZOS)
+        print(f"[AI Engine] New image size: {image.size}")
 
     # Preprocess image for Canny ControlNet
     image_np = np.array(image)
