@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Box, Container, Grid, Button, Typography, Paper, TextField, Divider, CircularProgress } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { Box, Container, Grid, Button, Typography, Paper, TextField, Divider, CircularProgress, Skeleton } from '@mui/material';
 import { AutoAwesome, PhotoCamera, AutoFixHigh } from '@mui/icons-material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -41,6 +41,8 @@ const theme = createTheme({
   }
 });
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -48,6 +50,14 @@ export default function Home() {
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number>(0);
+  const [totalSteps, setTotalSteps] = useState<number>(40);
+  const [remainingTime, setRemainingTime] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleImageSelected = (selectedFile: File) => {
     setFile(selectedFile);
@@ -67,11 +77,12 @@ export default function Home() {
     try {
       setIsGenerating(true);
       setResultUrl(null);
+      setProgress(0);
 
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadRes = await fetch('http://localhost:8000/upload', {
+      const uploadRes = await fetch(`${API_URL}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -86,23 +97,50 @@ export default function Home() {
         custom_prompt: selectedStyle === 'Custom' ? customPrompt : null,
       };
 
-      const genRes = await fetch('http://localhost:8000/generate', {
+      const genRes = await fetch(`${API_URL}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(generatePayload),
       });
 
       if (!genRes.ok) throw new Error('Failed to generate image');
-      const genData = await genRes.json();
+      const { task_id } = await genRes.json();
 
-      setResultUrl(`http://localhost:8000${genData.result_url}`);
+      // Start polling for status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_URL}/status/${task_id}`);
+          if (!statusRes.ok) return;
+          
+          const statusData = await statusRes.json();
+          setProgress(statusData.progress || 0);
+          setTotalSteps(statusData.total_steps || 40);
+          setRemainingTime(statusData.remaining_time);
+
+          if (statusData.status === 'completed') {
+            clearInterval(pollInterval);
+            setIsGenerating(false);
+            setResultUrl(`${API_URL}${statusData.result_url}`);
+          } else if (statusData.status === 'failed') {
+            clearInterval(pollInterval);
+            setIsGenerating(false);
+            alert(`Generation failed: ${statusData.error}`);
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+        }
+      }, 1000);
+
+      // Clean up interval if component unmounts
+      return () => clearInterval(pollInterval);
     } catch (error) {
       console.error(error);
-      alert('An error occurred during generation.');
-    } finally {
       setIsGenerating(false);
+      alert('An error occurred during generation.');
     }
   };
+
+  if (!mounted) return null;
 
   return (
     <ThemeProvider theme={theme}>
@@ -159,13 +197,15 @@ export default function Home() {
                 <Button
                   variant="contained"
                   size="large"
-                  startIcon={isGenerating ? <CircularProgress size={20} color="inherit" /> : <AutoAwesome />}
+                  startIcon={isGenerating ? <CircularProgress variant="determinate" value={Math.min(100, (progress / totalSteps) * 100)} size={20} color="inherit" /> : <AutoAwesome />}
                   onClick={handleGenerate}
                   disabled={!file || isGenerating || (selectedStyle === 'Custom' && !customPrompt)}
                   sx={{ mt: 4, py: 2, px: 6, fontSize: '1.1rem' }}
                   fullWidth
                 >
-                  {isGenerating ? 'AI is decorating...' : 'Generate Design'}
+                  {isGenerating 
+                    ? `AI is decorating... ${Math.round((progress / totalSteps) * 100)}%` 
+                    : 'Generate Design'}
                 </Button>
               </Grid>
             </Grid>
@@ -197,11 +237,103 @@ export default function Home() {
                     <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
                       AI Generated Result
                     </Typography>
-                    <Box sx={{ flexGrow: 1, borderRadius: 2, overflow: 'hidden', bgcolor: '#000', minHeight: 400, position: 'relative' }}>
+                    <Box sx={{ 
+                      flexGrow: 1, 
+                      borderRadius: 2, 
+                      overflow: 'hidden', 
+                      bgcolor: isGenerating ? 'transparent' : '#000', 
+                      minHeight: 400, 
+                      position: 'relative' 
+                    }}>
                       {isGenerating ? (
-                        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
-                          <CircularProgress color="inherit" sx={{ mb: 2 }} />
-                          <Typography>Decorating your room...</Typography>
+                        <Box sx={{ 
+                          height: '100%', 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          color: '#fff', 
+                          px: 4,
+                          position: 'relative',
+                          zIndex: 1
+                        }}>
+                          {/* Background blurred image or Skeleton */}
+                          {previewUrl ? (
+                            <Box sx={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              backgroundImage: `url(${previewUrl})`,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                              filter: 'blur(10px) brightness(0.6)',
+                              zIndex: -1,
+                            }} />
+                          ) : (
+                            <Skeleton 
+                               variant="rectangular" 
+                               width="100%" 
+                               height="100%" 
+                               sx={{ 
+                                 position: 'absolute', 
+                                 top: 0, 
+                                 left: 0, 
+                                 zIndex: -1, 
+                                 bgcolor: 'rgba(0,0,0,0.1)',
+                                 transform: 'none'
+                               }} 
+                            />
+                          )}
+                          
+                          <Paper sx={{ 
+                            p: 4, 
+                            borderRadius: 4, 
+                            bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                            backdropFilter: 'blur(20px)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            width: '100%',
+                            maxWidth: 400,
+                            textAlign: 'center',
+                            boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
+                          }}>
+                            <CircularProgress 
+                              variant="determinate" 
+                              value={Math.min(100, (progress / totalSteps) * 100)} 
+                              sx={{ 
+                                mb: 3, 
+                                color: '#fff',
+                                '& .MuiCircularProgress-circle': {
+                                  strokeLinecap: 'round',
+                                }
+                              }} 
+                              size={60}
+                              thickness={4}
+                            />
+                            
+                            <Typography variant="h6" sx={{ mb: 1, fontWeight: 700, letterSpacing: -0.5 }}>
+                              AI Decorating...
+                            </Typography>
+                            
+                            <Typography variant="body2" sx={{ opacity: 0.9, mb: 3, fontWeight: 500 }}>
+                              {remainingTime !== null ? `Estimated: ${remainingTime}s remaining` : 'Analyzing room structure...'}
+                            </Typography>
+                            
+                            <Box sx={{ width: '100%', mb: 1, height: 6, bgcolor: 'rgba(255,255,255,0.2)', borderRadius: 3, overflow: 'hidden' }}>
+                              <Box sx={{ 
+                                height: '100%', 
+                                width: `${Math.min(100, (progress / totalSteps) * 100)}%`, 
+                                bgcolor: '#fff', 
+                                boxShadow: '0 0 15px rgba(255,255,255,0.5)',
+                                transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)' 
+                              }} />
+                            </Box>
+                            
+                            <Typography variant="caption" sx={{ opacity: 0.7, fontWeight: 600 }}>
+                              Step {progress} of {totalSteps}
+                            </Typography>
+                          </Paper>
                         </Box>
                       ) : resultUrl ? (
                         <img src={resultUrl} alt="Generated" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />

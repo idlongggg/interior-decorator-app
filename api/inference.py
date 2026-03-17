@@ -1,5 +1,7 @@
 import os
 import shutil
+import threading
+import traceback
 from typing import Optional
 
 # To save resources and avoid waiting for 15GB+ model weights to download on every dev run,
@@ -19,11 +21,17 @@ from diffusers.utils import load_image
 # Set environment variable for MPS fallback to CPU for unsupported ops
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-# Set device to MPS for Apple Silicon Mac, else CPU
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+# Set device priority: CUDA (NVIDIA) -> MPS (Apple) -> CPU
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
 
 # Global variables for models
 pipe = None
+generation_lock = threading.Lock()
 
 
 def load_models():
@@ -68,22 +76,35 @@ def load_models():
 import traceback
 
 
-def generate_interior(image_path: str, style: str, room_type: str, custom_prompt: Optional[str] = None) -> str:
+def generate_interior(
+    image_path: str, 
+    style: str, 
+    room_type: str, 
+    custom_prompt: Optional[str] = None,
+    progress_callback: Optional[callable] = None
+) -> str:
     """
     Simulates or runs the actual Stable Diffusion XL + ControlNet generation.
     Returns the path to the generated image.
     """
-    try:
-        return _generate_interior_logic(image_path, style, room_type, custom_prompt)
-    except Exception as e:
-        error_msg = f"Error in generate_interior: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        with open("error_log.txt", "w") as f:
-            f.write(error_msg)
-        raise e
+    with generation_lock:
+        try:
+            return _generate_interior_logic(image_path, style, room_type, custom_prompt, progress_callback)
+        except Exception as e:
+            error_msg = f"Error in generate_interior: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            with open("error_log.txt", "w") as f:
+                f.write(error_msg)
+            raise e
 
 
-def _generate_interior_logic(image_path: str, style: str, room_type: str, custom_prompt: Optional[str] = None) -> str:
+def _generate_interior_logic(
+    image_path: str, 
+    style: str, 
+    room_type: str, 
+    custom_prompt: Optional[str] = None,
+    progress_callback: Optional[callable] = None
+) -> str:
     # Mapping styles to detailed prompts
     style_prompts = {
         "Minimalist": "A high-resolution photo of a modern room transformed with a minimalist interior design. The room maintains its original spatial structure and camera angle. The background walls are painted a clean, bright white. Furnishings are extremely sparse and functional. In the center, there is a very simple, low-profile dining table with a smooth concrete or natural wood top, accompanied by a single, sculptural dark wood chair. A wall-mounted, ultra-thin TV is seamlessly integrated, with no visible wires or furniture below it. The curtains are simple, floor-to-ceiling sheer white linen. Minimalist decor, like one unique ceramic vase, is placed strategically. The lighting is soft and natural daylight, highlighting the clean lines and negative space. Professional architectural photography.",
@@ -127,10 +148,25 @@ def _generate_interior_logic(image_path: str, style: str, room_type: str, custom
 
     # Resize image to a manageable size for SD 1.5 on MPS (max 768 on the long side recommended)
     max_size = 768
-    if max(image.size) > max_size:
-        print(f"[AI Engine] Resizing image from {image.size} to max {max_size}px")
-        image.thumbnail((max_size, max_size), Image.LANCZOS)
-        print(f"[AI Engine] New image size: {image.size}")
+    width, height = image.size
+    
+    # Scale if too large while maintaining aspect ratio
+    if max(width, height) > max_size:
+        scale = max_size / max(width, height)
+        width = int(width * scale)
+        height = int(height * scale)
+        
+    # CRITICAL: Stable Diffusion 1.5 latents are 1/8th of pixel size. 
+    # Dimensions MUST be multiples of 8 to avoid tensor shape mismatch errors 
+    # (e.g. "tensor a (87) must match tensor b (64)").
+    width = (width // 8) * 8
+    height = (height // 8) * 8
+    
+    if image.size != (width, height):
+        print(f"[AI Engine] Resizing image from {image.size} to {width}x{height} (multiple of 8)")
+        image = image.resize((width, height), Image.LANCZOS)
+    else:
+        print(f"[AI Engine] Image size: {image.size}")
 
     # Preprocess image for Canny ControlNet
     image_np = np.array(image)
@@ -143,6 +179,12 @@ def _generate_interior_logic(image_path: str, style: str, room_type: str, custom
 
     # Generate
     generator = torch.Generator(device=device).manual_seed(42)
+    
+    # CRITICAL: Reset scheduler history to avoid "tensor shape mismatch" errors 
+    # when changing image resolutions between runs
+    if hasattr(pipe.scheduler, "model_outputs"):
+        pipe.scheduler.model_outputs = [None] * pipe.scheduler.config.solver_order
+        
     output = pipe(
         prompt,
         image=canny_image,
@@ -151,6 +193,8 @@ def _generate_interior_logic(image_path: str, style: str, room_type: str, custom
         guidance_scale=guidance_scale,
         generator=generator,
         controlnet_conditioning_scale=1.0,
+        callback=progress_callback,
+        callback_steps=1,
     ).images[0]
 
     os.makedirs("results", exist_ok=True)
