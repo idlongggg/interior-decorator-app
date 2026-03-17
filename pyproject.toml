@@ -1,7 +1,7 @@
 [project]
-name = "api"
+name = "interior-decorator-app"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI Interior Decorator App"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -19,4 +19,24 @@ dependencies = [
     "transformers==4.37.2",
     "uvicorn==0.27.1",
     "urllib3<2.0.0",
+    "streamlit==1.31.0",
+    "requests==2.31.0",
+    "pydantic-settings==2.1.0",
+]
+
+[project.scripts]
+api = "api.main:start"
+app = "app.ui:start"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["api", "app"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.2.0",
 ]
