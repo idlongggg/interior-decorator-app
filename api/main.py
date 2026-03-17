@@ -29,6 +29,7 @@ class GenerateRequest(BaseModel):
     image_path: str
     style: str
     room_type: str
+    custom_prompt: Optional[str] = None
 
 @app.get("/")
 def read_root():
@@ -48,7 +49,12 @@ async def upload_image(file: UploadFile = File(...)):
 @app.post("/generate")
 async def generate_image(request: GenerateRequest):
     try:
-        result_path = generate_interior(request.image_path, request.style, request.room_type)
+        result_path = generate_interior(
+            request.image_path, 
+            request.style, 
+            request.room_type, 
+            request.custom_prompt
+        )
         return {"result_url": f"/results/{os.path.basename(result_path)}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

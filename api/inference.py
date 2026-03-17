@@ -1,5 +1,6 @@
 import os
 import shutil
+from typing import Optional
 
 # To save resources and avoid waiting for 15GB+ model weights to download on every dev run,
 # we simulate the AI logic first. If you want true inference, uncomment the Stable Diffusion imports.
@@ -67,13 +68,13 @@ def load_models():
 import traceback
 
 
-def generate_interior(image_path: str, style: str, room_type: str) -> str:
+def generate_interior(image_path: str, style: str, room_type: str, custom_prompt: Optional[str] = None) -> str:
     """
     Simulates or runs the actual Stable Diffusion XL + ControlNet generation.
     Returns the path to the generated image.
     """
     try:
-        return _generate_interior_logic(image_path, style, room_type)
+        return _generate_interior_logic(image_path, style, room_type, custom_prompt)
     except Exception as e:
         error_msg = f"Error in generate_interior: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
@@ -82,7 +83,7 @@ def generate_interior(image_path: str, style: str, room_type: str) -> str:
         raise e
 
 
-def _generate_interior_logic(image_path: str, style: str, room_type: str) -> str:
+def _generate_interior_logic(image_path: str, style: str, room_type: str, custom_prompt: Optional[str] = None) -> str:
     # Mapping styles to detailed prompts
     style_prompts = {
         "Minimalist": "A high-resolution photo of a modern room transformed with a minimalist interior design. The room maintains its original spatial structure and camera angle. The background walls are painted a clean, bright white. Furnishings are extremely sparse and functional. In the center, there is a very simple, low-profile dining table with a smooth concrete or natural wood top, accompanied by a single, sculptural dark wood chair. A wall-mounted, ultra-thin TV is seamlessly integrated, with no visible wires or furniture below it. The curtains are simple, floor-to-ceiling sheer white linen. Minimalist decor, like one unique ceramic vase, is placed strategically. The lighting is soft and natural daylight, highlighting the clean lines and negative space. Professional architectural photography.",
@@ -103,7 +104,11 @@ def _generate_interior_logic(image_path: str, style: str, room_type: str) -> str
     guidance_scale = params["guidance_scale"]
     num_inference_steps = params["num_inference_steps"]
 
-    prompt = style_prompts.get(style, style_prompts["Modern"])
+    if style == "Custom" and custom_prompt:
+        prompt = custom_prompt
+    else:
+        prompt = style_prompts.get(style, style_prompts["Modern"])
+        
     negative_prompt = "low quality, blurry, distorted, ugly, messy, person, text, watermark, deformed, bad anatomy"
 
     print(f"[AI Engine] Running inference for {image_path}")
