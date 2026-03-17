@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useCallback } from 'react';
-import { Box, Typography, IconButton } from '@mui/material';
-import { CloudUpload, Close } from '@mui/icons-material';
+import { Box, Typography, IconButton, Button } from '@mui/material';
+import { CloudUpload, Close, PhotoLibrary, CameraAlt } from '@mui/icons-material';
 
 interface ImageUploaderProps {
   onImageSelected: (file: File) => void;
@@ -29,7 +29,7 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
   };
 
   return (
-    <Box sx={{ width: '100%', height: '100%' }}>
+    <Box sx={{ width: '100%' }}>
       {!previewUrl ? (
         <Box
           onDrop={handleDrop}
@@ -39,42 +39,71 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            height: '100%',
-            minHeight: 280,
+            minHeight: { xs: 200, sm: 280 },
             border: '2px dashed',
             borderColor: 'grey.300',
             borderRadius: 3,
-            cursor: 'pointer',
             transition: 'all 0.2s',
+            bgcolor: 'grey.50',
             '&:hover': {
               borderColor: 'primary.main',
               bgcolor: 'action.hover',
             },
+            p: { xs: 2, sm: 3 },
+            textAlign: 'center',
+            overflow: 'hidden'
           }}
         >
-          <input
-            type="file"
-            hidden
-            onChange={handleFileInput}
-            accept="image/*"
-            id="image-upload-input"
-          />
-          <label htmlFor="image-upload-input" style={{ cursor: 'pointer', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-            <CloudUpload sx={{ fontSize: 48, color: 'grey.400', mb: 2 }} />
-            <Typography variant="h6" color="text.secondary">
-              Upload Room Photo
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Drag & drop or click to browse
-            </Typography>
-          </label>
+          <CloudUpload sx={{ fontSize: { xs: 32, sm: 48 }, color: 'grey.400', mb: 1 }} />
+          <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 2, fontWeight: 500 }}>
+            Upload Room Photo
+          </Typography>
+          
+          <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Button
+              variant="outlined"
+              size="small"
+              component="label"
+              startIcon={<PhotoLibrary />}
+              sx={{ borderRadius: 2, bgcolor: 'white' }}
+            >
+              Gallery
+              <input
+                type="file"
+                hidden
+                onChange={handleFileInput}
+                accept="image/*"
+              />
+            </Button>
+            
+            <Button
+              variant="outlined"
+              size="small"
+              component="label"
+              startIcon={<CameraAlt />}
+              sx={{ borderRadius: 2, bgcolor: 'white' }}
+            >
+              Camera
+              <input
+                type="file"
+                hidden
+                onChange={handleFileInput}
+                accept="image/*"
+                capture="environment"
+              />
+            </Button>
+          </Box>
+          
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: { xs: 'none', sm: 'block' } }}>
+            or drag and drop image here
+          </Typography>
         </Box>
       ) : (
-        <Box sx={{ position: 'relative', width: '100%', height: '100%', minHeight: 280, borderRadius: 3, overflow: 'hidden' }}>
+        <Box sx={{ position: 'relative', width: '100%', height: { xs: 250, sm: 320 }, borderRadius: 3, overflow: 'hidden', bgcolor: 'black' }}>
           <img
             src={previewUrl}
             alt="Room preview"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
           />
           <IconButton
             onClick={onClear}
@@ -82,12 +111,13 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
               position: 'absolute',
               top: 8,
               right: 8,
-              bgcolor: 'error.main',
+              bgcolor: 'rgba(211, 47, 47, 0.9)',
               color: 'white',
               '&:hover': { bgcolor: 'error.dark' },
+              size: 'small'
             }}
           >
-            <Close />
+            <Close fontSize="small" />
           </IconButton>
         </Box>
       )}
