@@ -1,5 +1,9 @@
 import os
+import warnings
 import shutil
+
+# Suppress urllib3 v2 OpenSSL warning on macOS
+warnings.filterwarnings("ignore", message="NotOpenSSLWarning")
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
