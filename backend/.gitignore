@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+*.log
+error_log.txt
+.env
+
+# Model weights
+*.pth
+*.bin
+*.onnx
+
+# Data and results
+uploads/*
+!uploads/.gitkeep
+results/*
+!results/.gitkeep
+
+venv/
