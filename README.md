@@ -1,36 +1,51 @@
-# AI Interior Decorator
+# AI Interior Decorator (Trang trí Nội thất bằng AI)
 
-This application uses FastAPI for the backend and Streamlit for the frontend.
-It leverages Stable Diffusion with ControlNet to reimagined rooms.
+Ứng dụng này sử dụng FastAPI cho backend và Streamlit cho frontend.
+Nó tận dụng Stable Diffusion với ControlNet để thiết kế lại các căn phòng.
 
-## Installation
+## Cài đặt
 
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
+### Yêu cầu bắt buộc
+
+1. **Clone repository (Tải dự án bằng Git):**
+```bash
+git clone <repository_url>
+cd interior-decorator-app
+```
+
+2. **Cài đặt `uv` bằng curl:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Cài đặt các thư viện phụ thuộc
+
+Dự án này sử dụng [uv](https://github.com/astral-sh/uv) để quản lý dependency.
 
 ```bash
-# Install dependencies
+# Cài đặt thư viện
 uv sync
 ```
 
-## Running the Application
+## Chạy Ứng dụng
 
-You can now use the following commands to start each component:
+Bạn có thể sử dụng các lệnh sau để khởi động từng thành phần:
 
-### 1. Start the API (Backend)
+### 1. Khởi động API (Backend)
 ```bash
 uv run api
 ```
-The API will be available at `http://localhost:8000`.
+API sẽ chạy tại địa chỉ `http://localhost:8000`.
 
-### 2. Start the UI (Frontend)
+### 2. Khởi động UI (Frontend)
 ```bash
-uv run ui
+uv run app
 ```
-The UI will open in your browser.
+Giao diện người dùng (UI) sẽ tự động mở trên trình duyệt của bạn.
 
-## Project Structure
+## Cấu trúc Dự án
 
-- `api/`: FastAPI backend implementation.
-- `app/`: Streamlit frontend implementation.
-- `uploads/`: Temporary storage for uploaded images.
-- `results/`: Storage for generated designs.
+- `api/`: Mã nguồn backend bằng FastAPI.
+- `app/`: Mã nguồn frontend bằng Streamlit.
+- `uploads/`: Lưu trữ tạm thời các hình ảnh được tải lên.
+- `results/`: Lưu trữ các bản thiết kế được tạo ra.
