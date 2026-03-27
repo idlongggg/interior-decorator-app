@@ -1,196 +1,83 @@
 import os
 import shutil
-import threading
-import traceback
 import uuid
 import time
-import warnings
 import numpy as np
 import cv2
 import torch
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from diffusers import (
     StableDiffusionControlNetPipeline,
+    StableDiffusionInpaintPipeline,
     ControlNetModel,
     DPMSolverMultistepScheduler,
 )
 from diffusers.utils import load_image
-from transformers import (
-    DPTForDepthEstimation,
-    DPTImageProcessor,
-    SegformerForSemanticSegmentation,
-    SegformerImageProcessor,
-)
-from scipy import ndimage
+from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
-# Suppress urllib3 v2 OpenSSL warning on macOS
-warnings.filterwarnings("ignore", message="NotOpenSSLWarning")
+# -------------------- CONSTANTS --------------------
+ADE20K_FLOOR = 3
+ADE20K_WALL = 0
+ADE20K_CEILING = 5
 
-# --- CONFIGURATION & CONSTANTS ---
-
-# ADE20K class indices for room regions
-ADE20K_FLOOR_IDX = 3
-ADE20K_WALL_IDX = 0
-ADE20K_CEILING_IDX = 5
-ADE20K_WINDOW_IDX = 8
-ADE20K_DOOR_IDX = 14
-ADE20K_TABLE_IDX = 15
-ADE20K_CHAIR_IDX = 19
-ADE20K_SOFA_IDX = 23
-ADE20K_BED_IDX = 7
-ADE20K_CABINET_IDX = 10
-ADE20K_SHELF_IDX = 24
-ADE20K_CURTAIN_IDX = 18
-ADE20K_RUG_IDX = 28
-ADE20K_LAMP_IDX = 36
-ADE20K_PAINTING_IDX = 22
-ADE20K_SINK_IDX = 26          # sink index in ADE20K
-ADE20K_TOILET_IDX = 27        # toilet index
-ADE20K_DESK_IDX = 34          # desk index
-
-# Object -> preferred surface mapping
-OBJECT_SURFACE_MAP = {
-    "sofa": "floor",
-    "coffee_table": "floor",
-    "dining_table": "floor",
-    "chair": "floor",
-    "armchair": "floor",
-    "rug": "floor",
-    "plant": "floor",
-    "floor_lamp": "floor",
-    "tv_stand": "floor",
-    "bookshelf": "floor",
-    "bed": "floor",
-    "desk": "floor",
-    "mirror": "wall",
-    "painting": "wall",
-    "wall_shelf": "wall",
-    "clock": "wall",
-    "sconce": "wall",
-    "pendant_light": "ceiling",
-    "chandelier": "ceiling",
-    "ceiling_fan": "ceiling",
-    "table_lamp": "floor",
-    "vase": "floor",
-    "cushion": "floor",
+OBJECT_SURFACE = {
+    "sofa": "floor", "coffee_table": "floor", "dining_table": "floor", "chair": "floor",
+    "armchair": "floor", "rug": "floor", "plant": "floor", "floor_lamp": "floor",
+    "tv_stand": "floor", "bookshelf": "floor", "bed": "floor", "desk": "floor",
+    "mirror": "wall", "painting": "wall", "wall_shelf": "wall", "clock": "wall",
+    "sconce": "wall", "pendant_light": "ceiling", "chandelier": "ceiling", "ceiling_fan": "ceiling",
+    "table_lamp": "floor", "vase": "floor", "cushion": "floor",
 }
 
-# Object descriptions for prompts
-OBJECT_DESCRIPTIONS = {
-    "sofa": "a stylish upholstered sofa with comfortable cushions",
-    "coffee_table": "an elegant coffee table with a refined surface",
-    "dining_table": "a beautifully crafted dining table",
-    "chair": "a designer dining chair with clean lines",
-    "armchair": "a plush armchair with refined upholstery",
-    "rug": "a luxurious area rug with intricate patterns",
-    "plant": "a lush potted indoor plant adding natural freshness",
-    "floor_lamp": "a tall elegant floor lamp casting warm ambient light",
-    "tv_stand": "a sleek media console for entertainment",
-    "bookshelf": "a well-organized bookshelf with curated items",
-    "bed": "a comfortable bed with premium bedding and pillows",
-    "desk": "a functional designer desk with clean proportions",
-    "mirror": "a decorative wall mirror with a stylish frame",
-    "painting": "an artistic wall painting adding visual interest",
-    "wall_shelf": "floating wall shelves with decorative items",
-    "clock": "an elegant wall clock as a focal accent",
-    "sconce": "wall-mounted decorative sconces with warm lighting",
-    "pendant_light": "a designer pendant light hanging gracefully",
-    "chandelier": "a stunning chandelier as a centerpiece",
-    "ceiling_fan": "a modern ceiling fan with integrated lighting",
-    "table_lamp": "a stylish table lamp with soft ambient glow",
-    "vase": "a decorative ceramic vase with fresh flowers",
-    "cushion": "colorful throw cushions adding comfort and style",
+OBJECT_DESC = {
+    "sofa": "a stylish sofa", "coffee_table": "a coffee table", "dining_table": "a dining table",
+    "chair": "a chair", "armchair": "an armchair", "rug": "a rug", "plant": "a plant",
+    "floor_lamp": "a floor lamp", "tv_stand": "a TV stand", "bookshelf": "a bookshelf",
+    "bed": "a bed", "desk": "a desk", "mirror": "a mirror", "painting": "a painting",
+    "wall_shelf": "wall shelves", "clock": "a clock", "sconce": "wall sconces",
+    "pendant_light": "a pendant light", "chandelier": "a chandelier", "ceiling_fan": "a ceiling fan",
+    "table_lamp": "a table lamp", "vase": "a vase", "cushion": "cushions",
 }
 
-# Style-specific modifiers
-STYLE_MODIFIERS = {
-    "Minimalist": {
-        "prefix": "A high-resolution photorealistic interior photograph of a minimalist",
-        "tone": "ultra-clean lines, monochromatic palette, sparse furnishing, negative space",
-        "materials": "concrete, light wood, white surfaces, matte finishes",
-        "lighting": "bright natural daylight flooding through large windows",
-        "suffix": "Minimalist aesthetic with Scandinavian-Japanese influence. Professional architectural photography, 8K, ultra-detailed.",
-    },
-    "Scandi": {
-        "prefix": "A high-resolution photorealistic interior photograph of a warm Scandinavian",
-        "tone": "cozy hygge atmosphere, warm and inviting, organic shapes",
-        "materials": "light oak wood, white linen, soft wool, natural rattan",
-        "lighting": "warm golden natural light creating a cozy atmosphere",
-        "suffix": "Nordic design with warm textures and natural materials. Professional architectural photography, 8K, ultra-detailed.",
-    },
-    "Indochine": {
-        "prefix": "A high-resolution photorealistic interior photograph of a rich Indochine-style",
-        "tone": "luxurious East-meets-West fusion, ornate details, cultural richness",
-        "materials": "dark mahogany wood, rattan, brass, lacquerware, silk fabrics",
-        "lighting": "warm diffused light from brass lanterns and natural sources",
-        "suffix": "Vietnamese-French colonial Indochine aesthetic with tropical luxury. Professional architectural photography, 8K, ultra-detailed.",
-    },
-    "Modern": {
-        "prefix": "A high-resolution photorealistic interior photograph of a sleek contemporary modern",
-        "tone": "bold geometric shapes, cutting-edge design, sophisticated luxury",
-        "materials": "polished concrete, smoked glass, black steel, marble accents",
-        "lighting": "crisp cool lighting with dramatic accent spots",
-        "suffix": "Contemporary modern design with luxury materials. Professional architectural photography, 8K, ultra-detailed.",
-    },
-    "Japanese Zen": {
-        "prefix": "A high-resolution photorealistic interior photograph of a serene Japanese Zen",
-        "tone": "tranquil harmony, wabi-sabi imperfection, meditative atmosphere",
-        "materials": "bamboo, tatami, shoji screens, natural stone, paper lanterns",
-        "lighting": "soft filtered light through shoji screens, peaceful ambiance",
-        "suffix": "Japanese Zen aesthetic with traditional elements. Professional architectural photography, 8K, ultra-detailed.",
-    },
-    "Industrial": {
-        "prefix": "A high-resolution photorealistic interior photograph of an industrial loft-style",
-        "tone": "raw urban aesthetic, exposed structures, converted warehouse feel",
-        "materials": "exposed brick, raw concrete, black iron pipes, reclaimed wood",
-        "lighting": "Edison bulb pendant lights and large factory windows",
-        "suffix": "Industrial loft aesthetic with raw urban character. Professional architectural photography, 8K, ultra-detailed.",
-    },
+STYLE_TEXT = {
+    "Minimalist": "A minimalist living room with clean lines, neutral colors, sparse furnishing.",
+    "Scandi": "A Scandinavian living room with light wood, cozy textiles, warm lighting.",
+    "Modern": "A modern living room with sleek furniture, polished surfaces, contemporary design.",
+    "Japanese Zen": "A Japanese Zen room with natural materials, tatami, peaceful ambiance.",
+    "Industrial": "An industrial loft with exposed brick, metal accents, raw concrete.",
 }
 
-ROOM_DESCRIPTIONS = {
-    "Living Room": "living room",
-    "Bedroom": "bedroom",
-    "Dining Room": "dining room",
-    "Office": "home office",
-    "Kitchen": "kitchen",
-    "Bathroom": "bathroom",
-    "Studio": "studio apartment",
+ROOM_TYPE = {
+    "Living Room": "living room", "Bedroom": "bedroom", "Dining Room": "dining room",
+    "Office": "home office", "Kitchen": "kitchen", "Bathroom": "bathroom",
 }
 
-DEFAULT_NEGATIVE_PROMPT = (
-    "low quality, blurry, distorted, ugly, messy, person, people, text, watermark, "
-    "deformed, bad anatomy, disfigured, poorly drawn, extra limbs, mutation, "
-    "out of frame, cropped, worst quality, low resolution, jpeg artifacts, "
-    "cartoon, anime, sketch, drawing"
-)
+DEFAULT_NEGATIVE = "low quality, blurry, ugly, person, people, text, watermark, deformed"
 
-# Object size ratios for segmentation
-OBJECT_SIZE_RATIO = {
-    "sofa": 0.25, "coffee_table": 0.10, "dining_table": 0.18, "chair": 0.06,
+OBJECT_SIZE = {
+    "sofa": 0.18, "coffee_table": 0.10, "dining_table": 0.15, "chair": 0.06,
     "armchair": 0.10, "rug": 0.20, "plant": 0.04, "floor_lamp": 0.03,
-    "tv_stand": 0.12, "bookshelf": 0.10, "bed": 0.30, "desk": 0.12,
+    "tv_stand": 0.12, "bookshelf": 0.10, "bed": 0.25, "desk": 0.10,
     "mirror": 0.08, "painting": 0.06, "wall_shelf": 0.08, "clock": 0.03,
     "sconce": 0.02, "pendant_light": 0.05, "chandelier": 0.08, "ceiling_fan": 0.10,
     "table_lamp": 0.03, "vase": 0.02, "cushion": 0.03,
 }
 
-# --- DEVICE & GLOBALS ---
+# Cấu hình tối ưu tốc độ
+MAX_OBJECTS = 3                    # Giới hạn số object
+IMAGE_MAX_SIZE = 640               # Giảm kích thước ảnh để tăng tốc
+CONTROLNET_STEPS = 20              # Giảm steps từ 35 xuống 20
+INPAINT_STEPS = 15                 # Giảm steps từ 25 xuống 15
 
+# -------------------- DEVICE --------------------
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-def get_device_and_dtype():
-    """
-    Returns (device, torch_dtype) based on available hardware.
-    - CUDA: float16
-    - MPS: float32 (due to MPS float16 instability)
-    - CPU: float32
-    """
+def get_device():
     if torch.cuda.is_available():
         return "cuda", torch.float16
     elif torch.backends.mps.is_available():
@@ -198,329 +85,224 @@ def get_device_and_dtype():
     else:
         return "cpu", torch.float32
 
-device, model_dtype = get_device_and_dtype()
+device, dtype = get_device()
 
-# Global model references
-pipe = None
-generation_lock = threading.Lock()
-depth_model = None
-depth_processor = None
+# -------------------- MODELS --------------------
+controlnet_pipe = None
+inpaint_pipe = None
 seg_model = None
 seg_processor = None
 
-# Task database
-tasks = {}
-
-# --- MODEL LOADING (LAZY) ---
-
-def load_depth_model():
-    global depth_model, depth_processor
-    if depth_model is not None:
+def load_controlnet():
+    global controlnet_pipe
+    if controlnet_pipe is not None:
         return
-    print("[Depth] Loading Intel DPT-Large depth model...")
-    model_name = "Intel/dpt-large"
-    depth_processor = DPTImageProcessor.from_pretrained(model_name)
-    depth_model = DPTForDepthEstimation.from_pretrained(model_name)
-    depth_model.eval()
-    print("[Depth] DPT depth model loaded successfully.")
+    controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=dtype)
+    controlnet_pipe = StableDiffusionControlNetPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5", controlnet=controlnet, torch_dtype=dtype
+    )
+    controlnet_pipe.safety_checker = None
+    controlnet_pipe.scheduler = DPMSolverMultistepScheduler.from_config(controlnet_pipe.scheduler.config)
+    controlnet_pipe.to(device)
+    controlnet_pipe.enable_attention_slicing()
+    controlnet_pipe.enable_vae_slicing()  # Thêm để giảm VRAM
 
-def load_segmentation_model():
+def load_inpaint():
+    global inpaint_pipe
+    if inpaint_pipe is not None:
+        return
+    inpaint_pipe = StableDiffusionInpaintPipeline.from_pretrained(
+        "runwayml/stable-diffusion-inpainting", torch_dtype=dtype
+    )
+    inpaint_pipe.safety_checker = None
+    inpaint_pipe.scheduler = DPMSolverMultistepScheduler.from_config(inpaint_pipe.scheduler.config)
+    inpaint_pipe.to(device)
+    inpaint_pipe.enable_attention_slicing()
+    inpaint_pipe.enable_vae_slicing()  # Thêm để giảm VRAM
+
+def load_segmentation():
     global seg_model, seg_processor
     if seg_model is not None:
         return
-    print("[Segmentation] Loading SegFormer model...")
-    model_name = "nvidia/segformer-b2-finetuned-ade-512-512"
-    seg_processor = SegformerImageProcessor.from_pretrained(model_name)
-    seg_model = SegformerForSemanticSegmentation.from_pretrained(model_name)
+    seg_processor = SegformerImageProcessor.from_pretrained("nvidia/segformer-b2-finetuned-ade-512-512")
+    seg_model = SegformerForSemanticSegmentation.from_pretrained("nvidia/segformer-b2-finetuned-ade-512-512")
     seg_model.eval()
-    print("[Segmentation] SegFormer model loaded successfully.")
 
-def load_ai_models():
-    global pipe
-    if pipe is not None:
-        return
-    print(f"[AI Engine] Using device: {device}, dtype: {model_dtype}")
-    print("[AI Engine] Loading models (SD 1.5 + ControlNet Canny)...")
-    try:
-        controlnet = ControlNetModel.from_pretrained(
-            "lllyasviel/sd-controlnet-canny", torch_dtype=model_dtype
-        )
-        pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5",
-            controlnet=controlnet,
-            torch_dtype=model_dtype,
-        )
-        pipe.safety_checker = None
-        pipe.feature_extractor = None
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-        pipe.to(device)
-        pipe.enable_attention_slicing()
-        pipe.enable_vae_slicing()
-        print("[AI Engine] Models loaded successfully.")
-    except Exception as e:
-        print(f"[AI Engine] Failed to load models: {e}")
-        traceback.print_exc()
-        raise e
-
-# --- UTILITY FUNCTIONS ---
-
-def estimate_depth(image: Image.Image) -> Image.Image:
-    load_depth_model()
-    original_size = image.size
-    inputs = depth_processor(images=image, return_tensors="pt")
-    with torch.no_grad():
-        outputs = depth_model(**inputs)
-        predicted_depth = outputs.predicted_depth
-    prediction = torch.nn.functional.interpolate(
-        predicted_depth.unsqueeze(1),
-        size=original_size[::-1],
-        mode="bicubic",
-        align_corners=False,
-    ).squeeze()
-    depth_np = prediction.cpu().numpy()
-    depth_min, depth_max = depth_np.min(), depth_np.max()
-    if depth_max - depth_min > 0:
-        depth_normalized = ((depth_np - depth_min) / (depth_max - depth_min) * 255).astype(np.uint8)
-    else:
-        depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
-    return Image.fromarray(depth_normalized).convert("RGB")
-
-def build_prompt(style: str, objects_list: List[str], room_type: str = "Living Room", custom_prompt: Optional[str] = None) -> dict:
-    if style == "Custom" and custom_prompt:
-        return {"prompt": custom_prompt, "negative_prompt": DEFAULT_NEGATIVE_PROMPT}
-
-    style_info = STYLE_MODIFIERS.get(style, STYLE_MODIFIERS["Modern"])
-    room_desc = ROOM_DESCRIPTIONS.get(room_type, "room")
-    obj_descriptions = [OBJECT_DESCRIPTIONS.get(obj, f"a {obj.replace('_', ' ')}") for obj in objects_list]
-    objects_text = ", ".join(obj_descriptions) if obj_descriptions else "tasteful furnishings"
-
-    prompt = (
-        f"{style_info['prefix']} {room_desc} featuring {objects_text}. "
-        f"The room maintains its original spatial structure and camera angle. "
-        f"Style elements: {style_info['tone']}. "
-        f"Materials: {style_info['materials']}. "
-        f"Lighting: {style_info['lighting']}. "
-        f"{style_info['suffix']}"
-    )
-    return {"prompt": prompt, "negative_prompt": DEFAULT_NEGATIVE_PROMPT}
-
-def get_room_segments(image: Image.Image) -> Dict[str, np.ndarray]:
-    load_segmentation_model()
+# -------------------- HELPERS --------------------
+def get_segmentation(image):
+    load_segmentation()
     inputs = seg_processor(images=image, return_tensors="pt")
     with torch.no_grad():
         outputs = seg_model(**inputs)
     logits = outputs.logits
-    upsampled = torch.nn.functional.interpolate(logits, size=image.size[::-1], mode="bilinear", align_corners=False)
-    seg_map = upsampled.argmax(dim=1).squeeze().cpu().numpy()
-    floor_mask = (seg_map == ADE20K_FLOOR_IDX).astype(np.uint8)
-    wall_mask = (seg_map == ADE20K_WALL_IDX).astype(np.uint8)
-    ceiling_mask = (seg_map == ADE20K_CEILING_IDX).astype(np.uint8)
-    return {"floor": floor_mask, "wall": wall_mask, "ceiling": ceiling_mask, "full_segmap": seg_map}
+    upsampled = torch.nn.functional.interpolate(logits, size=image.size[::-1], mode="bilinear")
+    seg = upsampled.argmax(dim=1).squeeze().cpu().numpy()
+    return {
+        "floor": (seg == ADE20K_FLOOR).astype(np.uint8),
+        "wall": (seg == ADE20K_WALL).astype(np.uint8),
+        "ceiling": (seg == ADE20K_CEILING).astype(np.uint8),
+    }
 
-def detect_room_type(seg_map: np.ndarray) -> str:
-    """
-    Phân loại phòng dựa trên segmentation map (ADE20K indices).
-    Trả về một trong các giá trị: "Living Room", "Bedroom", "Dining Room",
-    "Kitchen", "Bathroom", "Office", "Studio"
-    """
-    # Đếm số pixel thuộc các class đặc trưng
-    bed_pixels = np.sum(seg_map == ADE20K_BED_IDX)
-    sofa_pixels = np.sum(seg_map == ADE20K_SOFA_IDX)
-    dining_table_pixels = np.sum(seg_map == ADE20K_TABLE_IDX)  # table in ADE20K includes dining table
-    chair_pixels = np.sum(seg_map == ADE20K_CHAIR_IDX)
-    cabinet_pixels = np.sum(seg_map == ADE20K_CABINET_IDX)
-    sink_pixels = np.sum(seg_map == ADE20K_SINK_IDX)
-    toilet_pixels = np.sum(seg_map == ADE20K_TOILET_IDX)
-    desk_pixels = np.sum(seg_map == ADE20K_DESK_IDX)
+def random_mask(surface_mask, obj_name):
+    h, w = surface_mask.shape
+    size = max(32, int(min(h, w) * OBJECT_SIZE.get(obj_name, 0.1)))
+    ys, xs = np.where(surface_mask > 0)
+    if len(xs) == 0:
+        return None
+    idx = np.random.randint(len(xs))
+    cx, cy = xs[idx], ys[idx]
+    x1 = max(0, cx - size//2)
+    x2 = min(w, cx + size//2)
+    y1 = max(0, cy - size//2)
+    y2 = min(h, cy + size//2)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    mask[y1:y2, x1:x2] = 255
+    return mask
 
-    total_pixels = seg_map.size
+# Hàm add_object đã được gộp trong generate, không cần dùng riêng
+# def add_object(...) - bỏ
 
-    # Thresholds (can be adjusted)
-    if bed_pixels / total_pixels > 0.05:
-        return "Bedroom"
-    if sofa_pixels / total_pixels > 0.05:
-        return "Living Room"
-    if dining_table_pixels / total_pixels > 0.03:
-        return "Dining Room"
-    if cabinet_pixels / total_pixels > 0.05 or sink_pixels / total_pixels > 0.02:
-        return "Kitchen"
-    if toilet_pixels / total_pixels > 0.02:
-        return "Bathroom"
-    if desk_pixels / total_pixels > 0.03:
-        return "Office"
-    # Default
-    return "Living Room"
+# -------------------- GENERATION --------------------
+def generate(image_path, style, objects, room=None):
+    # Giới hạn số object
+    if len(objects) > MAX_OBJECTS:
+        objects = objects[:MAX_OBJECTS]
 
-# --- INFERENCE LOGIC ---
+    # Load base image
+    img = load_image(image_path).convert("RGB")
+    w, h = img.size
+    # Resize về kích thước tối đa IMAGE_MAX_SIZE
+    if max(w, h) > IMAGE_MAX_SIZE:
+        scale = IMAGE_MAX_SIZE / max(w, h)
+        w, h = int(w * scale), int(h * scale)
+    # Đảm bảo chia hết cho 8
+    w, h = (w // 8) * 8, (h // 8) * 8
+    img = img.resize((w, h), Image.LANCZOS)
 
-def generate_interior(
-    image_path: str,
-    style: str,
-    objects_list: List[str],
-    room_type: Optional[str] = None,
-    custom_prompt: Optional[str] = None,
-    progress_callback: Optional[Any] = None
-) -> str:
-    with generation_lock:
-        try:
-            # If room_type not provided, detect it using segmentation
-            if room_type is None:
-                # Load segmentation model if not already loaded
-                load_segmentation_model()
-                # Load image for detection
-                image_for_detect = load_image(image_path).convert("RGB")
-                seg_dict = get_room_segments(image_for_detect)
-                seg_map = seg_dict["full_segmap"]
-                room_type = detect_room_type(seg_map)
-                print(f"[Detect] Detected room type: {room_type}")
+    # Room type
+    if room is None:
+        room = "Living Room"
+    room_name = ROOM_TYPE.get(room, "room")
 
-            # Build prompt with objects and room type
-            prompt_data = build_prompt(style, objects_list, room_type, custom_prompt)
-            prompt = prompt_data["prompt"]
-            negative_prompt = prompt_data["negative_prompt"]
+    # Prompt cho base image
+    if not objects:
+        prompt = f"{STYLE_TEXT[style]} {room_name} interior, empty room. High quality photograph."
+    else:
+        obj_list = [OBJECT_DESC[o] for o in objects]
+        prompt = f"{STYLE_TEXT[style]} featuring {', '.join(obj_list)}. High quality interior photograph."
 
-            # Style-specific parameters
-            style_params = {
-                "Minimalist": {"gs": 7.5, "steps": 35},
-                "Scandi": {"gs": 8.5, "steps": 40},
-                "Indochine": {"gs": 9.0, "steps": 50},
-                "Modern": {"gs": 8.5, "steps": 45},
-                "Japanese Zen": {"gs": 8.0, "steps": 40},
-                "Industrial": {"gs": 8.5, "steps": 45},
-            }
-            params = style_params.get(style, style_params["Modern"])
-            guidance_scale = params["gs"]
-            num_inference_steps = params["steps"]
+    # ControlNet
+    load_controlnet()
+    np_img = np.array(img)
+    canny = cv2.Canny(np_img, 100, 200)[:, :, None]
+    canny = np.concatenate([canny, canny, canny], axis=2)
+    canny_img = Image.fromarray(canny)
 
-            print(f"[AI Engine] Running inference for {image_path}")
-            load_ai_models()
-            if pipe is None:
-                raise RuntimeError("AI Models not initialized.")
+    gen = torch.Generator(device=device).manual_seed(42)
 
-            image = load_image(image_path).convert("RGB")
-            max_size = 768
-            width, height = image.size
-            if max(width, height) > max_size:
-                scale = max_size / max(width, height)
-                width, height = int(width * scale), int(height * scale)
-            width = (width // 8) * 8
-            height = (height // 8) * 8
-            if image.size != (width, height):
-                image = image.resize((width, height), Image.LANCZOS)
+    # Sinh base image với số bước giảm
+    base = controlnet_pipe(
+        prompt, image=canny_img, negative_prompt=DEFAULT_NEGATIVE,
+        num_inference_steps=CONTROLNET_STEPS, guidance_scale=7.5, generator=gen
+    ).images[0]
 
-            image_np = np.array(image)
-            image_canny = cv2.Canny(image_np, 100, 200)[:, :, None]
-            image_canny = np.concatenate([image_canny, image_canny, image_canny], axis=2)
-            canny_image = Image.fromarray(image_canny)
+    # Nếu không có object, trả về luôn
+    if not objects:
+        out_path = f"results/generated_{os.path.basename(image_path)}"
+        base.save(out_path)
+        return out_path
 
-            generator = torch.Generator(device=device).manual_seed(42)
-            # Reset scheduler internal state if needed (DPMSolverMultistepScheduler)
-            if hasattr(pipe.scheduler, "model_outputs"):
-                pipe.scheduler.model_outputs = [None] * pipe.scheduler.config.solver_order
+    # Segmentation một lần
+    seg = get_segmentation(base)
 
-            output = pipe(
-                prompt, image=canny_image, negative_prompt=negative_prompt,
-                num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
-                generator=generator, controlnet_conditioning_scale=1.0,
-                callback=progress_callback, callback_steps=1,
-            ).images[0]
+    # Tạo mask tổng hợp
+    combined_mask = np.zeros((h, w), dtype=np.uint8)
+    for obj in objects:
+        surface = OBJECT_SURFACE.get(obj, "floor")
+        surf_mask = seg.get(surface, np.zeros_like(seg["floor"]))
+        if np.sum(surf_mask) == 0:
+            print(f"⚠️ No {surface} detected for {obj}, skip")
+            continue
+        mask = random_mask(surf_mask, obj)
+        if mask is None:
+            print(f"⚠️ No region for {obj}, skip")
+            continue
+        combined_mask = np.maximum(combined_mask, mask)
 
-            os.makedirs("results", exist_ok=True)
-            result_path = f"results/generated_{os.path.basename(image_path)}"
-            output.save(result_path)
-            return result_path
-        except Exception as e:
-            traceback.print_exc()
-            with open("error_log.txt", "w") as f:
-                f.write(traceback.format_exc())
-            raise e
+    # Nếu không có mask, trả về base
+    if np.sum(combined_mask) == 0:
+        out_path = f"results/generated_{os.path.basename(image_path)}"
+        base.save(out_path)
+        return out_path
 
-# --- FASTAPI APP ---
+    # Inpainting một lần
+    load_inpaint()
+    prompt_inpaint = f"{', '.join([OBJECT_DESC[o] for o in objects])} in a {room_name}, {STYLE_TEXT[style]} Photorealistic."
+    mask_img = Image.fromarray(combined_mask).convert("L")
+    result = inpaint_pipe(
+        prompt=prompt_inpaint,
+        image=base,
+        mask_image=mask_img,
+        negative_prompt=DEFAULT_NEGATIVE,
+        num_inference_steps=INPAINT_STEPS,
+        guidance_scale=7.5,
+    ).images[0]
 
-app = FastAPI(title="AI Interior Decorator API")
+    out_path = f"results/generated_{os.path.basename(image_path)}"
+    result.save(out_path)
+    return out_path
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# -------------------- API --------------------
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("results", exist_ok=True)
 
-class GenerateRequest(BaseModel):
+tasks = {}
+
+class GenReq(BaseModel):
     image_path: str
     style: str
-    objects: List[str] = []                    # Danh sách object muốn thêm
-    room_type: Optional[str] = None            # Nếu None sẽ tự động detect
-    custom_prompt: Optional[str] = None
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "AI Interior Decorator API is running."}
+    objects: List[str] = []
+    room_type: Optional[str] = None
+    custom_prompt: Optional[str] = None  # chưa sử dụng nhưng giữ để tương thích
 
 @app.post("/upload")
-async def upload_image(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...)):
     if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    file_path = f"uploads/{file.filename}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return {"image_path": file_path, "message": "File uploaded successfully"}
+        raise HTTPException(400, "Not an image")
+    path = f"uploads/{file.filename}"
+    with open(path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"image_path": path}
 
 @app.post("/generate")
-async def generate_image(request: GenerateRequest, background_tasks: BackgroundTasks):
-    task_id = str(uuid.uuid4())
-    style_steps = {"Minimalist": 35, "Scandi": 40, "Indochine": 50, "Modern": 45, "Japanese Zen": 40, "Industrial": 45}
-    total_steps = style_steps.get(request.style, 45)
-    tasks[task_id] = {
-        "status": "processing", "progress": 0, "total_steps": total_steps,
-        "result_url": None, "error": None, "start_time": time.time(),
-        "estimated_total_time": total_steps * 4,
-    }
-    def progress_callback(step, timestep, latents):
-        tasks[task_id]["progress"] = step
-    def run_generation_task(t_id: str, req: GenerateRequest):
+async def gen(req: GenReq, background: BackgroundTasks):
+    tid = str(uuid.uuid4())
+    tasks[tid] = {"status": "processing", "result": None, "error": None}
+    def run():
         try:
-            result_path = generate_interior(
-                req.image_path, req.style, req.objects, req.room_type, req.custom_prompt, progress_callback
-            )
-            tasks[t_id]["status"] = "completed"
-            tasks[t_id]["progress"] = 100
-            tasks[t_id]["result_url"] = f"/results/{os.path.basename(result_path)}"
+            out = generate(req.image_path, req.style, req.objects, req.room_type)
+            tasks[tid]["status"] = "completed"
+            tasks[tid]["result"] = f"/results/{os.path.basename(out)}"
         except Exception as e:
-            tasks[t_id]["status"] = "failed"
-            tasks[t_id]["error"] = str(e)
-    background_tasks.add_task(run_generation_task, task_id, request)
-    return {"task_id": task_id}
+            tasks[tid]["status"] = "failed"
+            tasks[tid]["error"] = str(e)
+    background.add_task(run)
+    return {"task_id": tid}
 
-@app.get("/status/{task_id}")
-async def get_task_status(task_id: str):
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
-    task = tasks[task_id]
-    elapsed = time.time() - task["start_time"]
-    total_steps, progress = task["total_steps"], task["progress"]
-    if task["status"] == "processing" and progress > 0:
-        remaining_time = max(0, (total_steps - progress) * (elapsed / progress))
-    elif task["status"] == "processing":
-        remaining_time = task["estimated_total_time"] - elapsed
-    else:
-        remaining_time = 0
-    return {
-        "task_id": task_id, "status": task["status"], "progress": progress,
-        "total_steps": total_steps, "remaining_time": round(max(0, remaining_time), 1),
-        "result_url": task["result_url"], "error": task["error"]
-    }
+@app.get("/status/{tid}")
+def status(tid: str):
+    if tid not in tasks:
+        raise HTTPException(404, "Not found")
+    return tasks[tid]
 
 @app.get("/results/{filename}")
-async def get_result(filename: str):
-    file_path = f"results/{filename}"
-    if os.path.exists(file_path):
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="File not found")
+def result(filename: str):
+    path = f"results/{filename}"
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(404, "Not found")
 
 if __name__ == "__main__":
     import uvicorn
