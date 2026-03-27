@@ -109,39 +109,53 @@ export default function Home() {
       });
 
       if (!genRes.ok) throw new Error('Failed to generate image');
-      const { task_id } = await genRes.json();
+      if (!genRes.body) throw new Error('No response body');
 
-      // Start polling for status
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`${API_URL}/status/${task_id}`);
-          if (!statusRes.ok) return;
-          
-          const statusData = await statusRes.json();
-          setProgress(statusData.progress || 0);
-          setTotalSteps(statusData.total_steps || 40);
-          setRemainingTime(statusData.remaining_time);
+      const reader = genRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-          if (statusData.status === 'completed') {
-            clearInterval(pollInterval);
-            setIsGenerating(false);
-            setResultUrl(`${API_URL}${statusData.result_url}`);
-          } else if (statusData.status === 'failed') {
-            clearInterval(pollInterval);
-            setIsGenerating(false);
-            alert(`Generation failed: ${statusData.error}`);
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(trimmedLine.slice(6));
+            
+            if (data.progress !== undefined) {
+              setProgress(data.progress);
+            }
+            if (data.total_steps !== undefined) {
+              setTotalSteps(data.total_steps);
+            }
+            if (data.message) {
+              setRemainingTime(data.message); // Using remainingTime state to show current message
+            }
+            if (data.result_url) {
+              setIsGenerating(false);
+              setResultUrl(`${API_URL}${data.result_url}`);
+              return; // Generation complete
+            }
+            if (data.error) {
+              throw new Error(data.error);
+            }
+          } catch (e) {
+            console.error('Error parsing SSE data:', e);
           }
-        } catch (err) {
-          console.error('Polling error:', err);
         }
-      }, 1000);
-
-      // Clean up interval if component unmounts
-      return () => clearInterval(pollInterval);
-    } catch (error) {
+      }
+    } catch (error: any) {
       console.error(error);
       setIsGenerating(false);
-      alert('An error occurred during generation.');
+      alert(`An error occurred: ${error.message}`);
     }
   };
 
@@ -336,7 +350,7 @@ export default function Home() {
                               </Typography>
                               
                               <Typography variant="body2" sx={{ opacity: 0.9, mb: 3, fontWeight: 500 }}>
-                                {remainingTime !== null ? `Estimated: ${remainingTime}s remaining` : 'Analyzing room structure...'}
+                                {remainingTime || 'Analyzing room structure...'}
                               </Typography>
                               
                               <Box sx={{ width: '100%', mb: 1, height: 6, bgcolor: 'rgba(255,255,255,0.2)', borderRadius: 3, overflow: 'hidden' }}>
