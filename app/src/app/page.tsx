@@ -8,7 +8,8 @@ import CssBaseline from '@mui/material/CssBaseline';
 import ImageUploader from '@/components/ImageUploader';
 import StyleSelector from '@/components/StyleSelector';
 import ObjectsChecklist from '@/components/ObjectsChecklist';
-import { Chair } from '@mui/icons-material';
+import ImageComparison from '@/components/ImageComparison';
+import { Chair, CompareArrows } from '@mui/icons-material';
 
 const theme = createTheme({
   palette: {
@@ -224,141 +225,145 @@ export default function Home() {
           </Paper>
 
           {(previewUrl || resultUrl || isGenerating) && (
-            <>
-              <Divider sx={{ my: 6 }} />
-              <Grid container spacing={4}>
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                      Original Room
-                    </Typography>
-                    <Box sx={{ flexGrow: 1, borderRadius: 2, overflow: 'hidden', bgcolor: '#000', minHeight: 400, position: 'relative' }}>
-                      {previewUrl ? (
-                        <img src={previewUrl} alt="Original" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                      ) : (
-                        <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
-                          Upload an image to see preview
-                        </Box>
-                      )}
-                    </Box>
-                  </Paper>
-                </Grid>
+            <Box sx={{ mt: 8 }}>
+              <Divider sx={{ mb: 6 }}>
+                <Typography variant="overline" sx={{ px: 2, color: 'text.secondary', fontWeight: 700, letterSpacing: 2 }}>
+                  Your Transformation
+                </Typography>
+              </Divider>
 
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                      AI Generated Result
-                    </Typography>
-                    <Box sx={{ 
-                      flexGrow: 1, 
-                      borderRadius: 2, 
-                      overflow: 'hidden', 
-                      bgcolor: isGenerating ? 'transparent' : '#000', 
-                      minHeight: 400, 
-                      position: 'relative' 
-                    }}>
-                      {isGenerating ? (
-                        <Box sx={{ 
-                          height: '100%', 
-                          display: 'flex', 
-                          flexDirection: 'column', 
-                          alignItems: 'center', 
-                          justifyContent: 'center', 
-                          color: '#fff', 
-                          px: 4,
-                          position: 'relative',
-                          zIndex: 1
-                        }}>
-                          {/* Background blurred image or Skeleton */}
-                          {previewUrl ? (
-                            <Box sx={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              backgroundImage: `url(${previewUrl})`,
-                              backgroundSize: 'cover',
-                              backgroundPosition: 'center',
-                              filter: 'blur(10px) brightness(0.6)',
-                              zIndex: -1,
-                            }} />
-                          ) : (
-                            <Skeleton 
-                               variant="rectangular" 
-                               width="100%" 
-                               height="100%" 
-                               sx={{ 
-                                 position: 'absolute', 
-                                 top: 0, 
-                                 left: 0, 
-                                 zIndex: -1, 
-                                 bgcolor: 'rgba(0,0,0,0.1)',
-                                 transform: 'none'
-                               }} 
-                            />
-                          )}
-                          
-                          <Paper sx={{ 
-                            p: 4, 
-                            borderRadius: 4, 
-                            bgcolor: 'rgba(255, 255, 255, 0.1)', 
-                            backdropFilter: 'blur(20px)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            width: '100%',
-                            maxWidth: 400,
-                            textAlign: 'center',
-                            boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
-                          }}>
-                            <CircularProgress 
-                              variant="determinate" 
-                              value={Math.min(100, (progress / totalSteps) * 100)} 
-                              sx={{ 
-                                mb: 3, 
-                                color: '#fff',
-                                '& .MuiCircularProgress-circle': {
-                                  strokeLinecap: 'round',
-                                }
-                              }} 
-                              size={60}
-                              thickness={4}
-                            />
-                            
-                            <Typography variant="h6" sx={{ mb: 1, fontWeight: 700, letterSpacing: -0.5 }}>
-                              AI Decorating...
-                            </Typography>
-                            
-                            <Typography variant="body2" sx={{ opacity: 0.9, mb: 3, fontWeight: 500 }}>
-                              {remainingTime !== null ? `Estimated: ${remainingTime}s remaining` : 'Analyzing room structure...'}
-                            </Typography>
-                            
-                            <Box sx={{ width: '100%', mb: 1, height: 6, bgcolor: 'rgba(255,255,255,0.2)', borderRadius: 3, overflow: 'hidden' }}>
-                              <Box sx={{ 
-                                height: '100%', 
-                                width: `${Math.min(100, (progress / totalSteps) * 100)}%`, 
-                                bgcolor: '#fff', 
-                                boxShadow: '0 0 15px rgba(255,255,255,0.5)',
-                                transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)' 
-                              }} />
-                            </Box>
-                            
-                            <Typography variant="caption" sx={{ opacity: 0.7, fontWeight: 600 }}>
-                              Step {progress} of {totalSteps}
-                            </Typography>
-                          </Paper>
-                        </Box>
-                      ) : resultUrl ? (
-                        <img src={resultUrl} alt="Generated" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                      ) : (
-                        <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
-                          Click Generate to see the result
-                        </Box>
-                      )}
+              {resultUrl ? (
+                <Box>
+                  <Typography variant="h5" sx={{ mb: 3, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <CompareArrows color="primary" sx={{ fontSize: 32 }} />
+                    Compare Results
+                  </Typography>
+                  <Box sx={{ maxWidth: '1000px', mx: 'auto' }}>
+                    <ImageComparison beforeImage={previewUrl || ''} afterImage={resultUrl} />
+                    <Box sx={{ mt: 2, textAlign: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Slide horizontally to compare original and generated designs
+                      </Typography>
                     </Box>
-                  </Paper>
+                  </Box>
+                </Box>
+              ) : (
+                <Grid container spacing={4}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', border: '1px solid rgba(0,0,0,0.05)' }}>
+                      <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 700, color: 'text.primary' }}>
+                        Original Room
+                      </Typography>
+                      <Box sx={{ flexGrow: 1, borderRadius: 2, overflow: 'hidden', bgcolor: '#000', minHeight: 400, position: 'relative' }}>
+                        {previewUrl ? (
+                          <img src={previewUrl} alt="Original" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                        ) : (
+                          <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
+                            Upload an image to see preview
+                          </Box>
+                        )}
+                      </Box>
+                    </Paper>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', border: '1px solid rgba(0,0,0,0.05)' }}>
+                      <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 700, color: 'text.primary' }}>
+                        AI Generated Result
+                      </Typography>
+                      <Box sx={{ 
+                        flexGrow: 1, 
+                        borderRadius: 2, 
+                        overflow: 'hidden', 
+                        bgcolor: isGenerating ? 'transparent' : '#000', 
+                        minHeight: 400, 
+                        position: 'relative' 
+                      }}>
+                        {isGenerating ? (
+                          <Box sx={{ 
+                            height: '100%', 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
+                            color: '#fff', 
+                            px: 4,
+                            position: 'relative',
+                            zIndex: 1
+                          }}>
+                            {previewUrl && (
+                                <Box sx={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    backgroundImage: `url(${previewUrl})`,
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center',
+                                    filter: 'blur(10px) brightness(0.6)',
+                                    zIndex: -1,
+                                }} />
+                            )}
+                            
+                            <Paper sx={{ 
+                              p: { xs: 3, sm: 4 }, 
+                              borderRadius: 4, 
+                              bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                              backdropFilter: 'blur(20px)',
+                              border: '1px solid rgba(255, 255, 255, 0.2)',
+                              width: '100%',
+                              maxWidth: 360,
+                              textAlign: 'center',
+                              boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)'
+                            }}>
+                              <CircularProgress 
+                                variant="determinate" 
+                                value={Math.min(100, (progress / totalSteps) * 100)} 
+                                sx={{ 
+                                  mb: 3, 
+                                  color: '#fff',
+                                  '& .MuiCircularProgress-circle': {
+                                    strokeLinecap: 'round',
+                                  }
+                                }} 
+                                size={54}
+                                thickness={4}
+                              />
+                              
+                              <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
+                                AI Decorating...
+                              </Typography>
+                              
+                              <Typography variant="body2" sx={{ opacity: 0.9, mb: 3, fontWeight: 500 }}>
+                                {remainingTime !== null ? `Estimated: ${remainingTime}s remaining` : 'Analyzing room structure...'}
+                              </Typography>
+                              
+                              <Box sx={{ width: '100%', mb: 1, height: 6, bgcolor: 'rgba(255,255,255,0.2)', borderRadius: 3, overflow: 'hidden' }}>
+                                <Box sx={{ 
+                                  height: '100%', 
+                                  width: `${Math.min(100, (progress / totalSteps) * 100)}%`, 
+                                  bgcolor: '#fff', 
+                                  transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)' 
+                                }} />
+                              </Box>
+                              
+                              <Typography variant="caption" sx={{ opacity: 0.7, fontWeight: 600 }}>
+                                Step {progress} of {totalSteps}
+                              </Typography>
+                            </Paper>
+                          </Box>
+                        ) : (
+                          <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
+                             {file ? 'Click Generate to see the result' : 'Upload an image first'}
+                          </Box>
+                        )}
+                      </Box>
+                    </Paper>
+                  </Grid>
                 </Grid>
-              </Grid>
-            </>
+              )}
+            </Box>
           )}
         </Container>
       </Box>

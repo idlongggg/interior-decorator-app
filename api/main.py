@@ -72,6 +72,7 @@ MAX_OBJECTS = 3
 IMAGE_MAX_SIZE = 640
 CONTROLNET_STEPS = 20
 INPAINT_STEPS = 15
+TOTAL_STEPS = 40  # ƯỚC TÍNH TỔNG QUAN
 
 # -------------------- DEVICE --------------------
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -194,7 +195,15 @@ def preprocess_sketch(image: Image.Image, model_type="lineart") -> Image.Image:
     return result
 
 # -------------------- GENERATION --------------------
-def generate(image_path, style, objects, room=None, controlnet_model="canny", control_strength=0.8):
+def update_task_progress(tid, progress, total_steps=TOTAL_STEPS):
+    if tid in tasks:
+        tasks[tid]["progress"] = progress
+        tasks[tid]["total_steps"] = total_steps
+
+def generate(image_path, style, objects, room=None, controlnet_model="canny", control_strength=0.8, tid=None):
+    # Cập nhật tiến trình ban đầu
+    if tid: update_task_progress(tid, 2)
+    
     # Giới hạn số object
     if len(objects) > MAX_OBJECTS:
         objects = objects[:MAX_OBJECTS]
@@ -224,8 +233,12 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
     else:
         prompt = base_prompt
 
+    if tid: update_task_progress(tid, 10)
+    
     # --- Chuẩn bị ảnh điều khiển ---
     load_controlnet(controlnet_model)
+    if tid: update_task_progress(tid, 15)
+
     if controlnet_model in ["lineart", "scribble"]:
         control_img = preprocess_sketch(img, controlnet_model)
     else:  # canny
@@ -233,6 +246,8 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
         canny = cv2.Canny(np_img, 100, 200)[:, :, None]
         canny = np.concatenate([canny, canny, canny], axis=2)
         control_img = Image.fromarray(canny)
+    
+    if tid: update_task_progress(tid, 20)
 
     generator = torch.Generator(device=device).manual_seed(42)
     base = controlnet_pipe(
@@ -242,14 +257,20 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
         controlnet_conditioning_scale=control_strength,
         generator=generator
     ).images[0]
+    
+    if tid: update_task_progress(tid, 50)
 
     if not objects:
         out_path = f"results/generated_{os.path.basename(image_path)}"
         base.save(out_path)
         return out_path
 
+    if tid: update_task_progress(tid, 70)
+
     # --- Segmentation và inpainting (giữ nguyên) ---
     seg = get_segmentation(base)
+    if tid: update_task_progress(tid, 80)
+    
     masks = []
     failed_objects = []
     for obj in objects:
@@ -275,6 +296,7 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
     if not masks:
         out_path = f"results/generated_{os.path.basename(image_path)}"
         base.save(out_path)
+        if tid: update_task_progress(tid, 100)
         return out_path
 
     combined_mask = np.zeros((h, w), dtype=np.uint8)
@@ -282,6 +304,7 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
         combined_mask = np.maximum(combined_mask, m)
 
     load_inpaint()
+    if tid: update_task_progress(tid, 85)
     surface_hints = []
     for obj in objects:
         if obj in failed_objects:
@@ -300,6 +323,8 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
     prompt_inpaint = f"{', '.join(surface_hints)} in a {room_name}, {STYLE_TEXT[style]}. Photorealistic."
     mask_img = Image.fromarray(combined_mask).convert("L")
 
+    if tid: update_task_progress(tid, 95)
+    
     result = inpaint_pipe(
         prompt=prompt_inpaint,
         image=base,
@@ -311,6 +336,7 @@ def generate(image_path, style, objects, room=None, controlnet_model="canny", co
 
     out_path = f"results/generated_{os.path.basename(image_path)}"
     result.save(out_path)
+    if tid: update_task_progress(tid, 100)
     print(f"✅ Generated with objects: {', '.join([o for o in objects if o not in failed_objects])}")
     if failed_objects:
         print(f"⚠️ Failed to place: {', '.join(failed_objects)}")
@@ -345,7 +371,7 @@ async def upload(file: UploadFile = File(...)):
 @app.post("/generate")
 async def gen(req: GenReq, background: BackgroundTasks):
     tid = str(uuid.uuid4())
-    tasks[tid] = {"status": "processing", "result": None, "error": None}
+    tasks[tid] = {"status": "processing", "result_url": None, "error": None, "progress": 0, "total_steps": TOTAL_STEPS}
     def run():
         try:
             out = generate(
@@ -354,10 +380,12 @@ async def gen(req: GenReq, background: BackgroundTasks):
                 req.objects,
                 req.room_type,
                 req.controlnet_model,
-                req.control_strength
+                req.control_strength,
+                tid=tid
             )
             tasks[tid]["status"] = "completed"
-            tasks[tid]["result"] = f"/results/{os.path.basename(out)}"
+            tasks[tid]["result_url"] = f"/results/{os.path.basename(out)}"
+            tasks[tid]["progress"] = TOTAL_STEPS
         except Exception as e:
             tasks[tid]["status"] = "failed"
             tasks[tid]["error"] = str(e)

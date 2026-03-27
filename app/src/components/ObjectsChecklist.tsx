@@ -82,7 +82,7 @@ export default function ObjectsChecklist({
           >
             {group.label}
           </Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             {group.items.map((item) => {
               const isSelected = selectedObjects.includes(item.id);
               return (
@@ -90,17 +90,21 @@ export default function ObjectsChecklist({
                   key={item.id}
                   label={`${item.icon} ${item.name}`}
                   onClick={() => toggleObject(item.id)}
-                  color={isSelected ? 'primary' : 'default'}
-                  variant={isSelected ? 'filled' : 'outlined'}
-                  size="small"
-                  sx={{ 
+                  sx={{
                     cursor: 'pointer',
-                    borderRadius: '8px',
-                    transition: 'all 0.2s',
-                    '&:hover': { 
-                      transform: 'scale(1.05)',
-                      backgroundColor: isSelected ? 'primary.main' : 'rgba(0, 0, 0, 0.04)'
-                    }
+                    borderRadius: '10px',
+                    fontWeight: isSelected ? 700 : 500,
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    bgcolor: isSelected ? 'primary.main' : 'white',
+                    color: isSelected ? 'white' : 'text.primary',
+                    border: '1px solid',
+                    borderColor: isSelected ? 'primary.main' : 'rgba(0,0,0,0.1)',
+                    '&:hover': {
+                      transform: 'translateY(-2px)',
+                      backgroundColor: isSelected ? 'primary.dark' : 'primary.50',
+                      borderColor: 'primary.main'
+                    },
+                    boxShadow: isSelected ? '0 4px 8px rgba(37, 99, 235, 0.2)' : 'none'
                   }}
                 />
               );

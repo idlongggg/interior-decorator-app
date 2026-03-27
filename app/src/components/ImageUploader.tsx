@@ -39,35 +39,56 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            minHeight: { xs: 200, sm: 280 },
+            minHeight: { xs: 200, sm: 320 },
             border: '2px dashed',
             borderColor: 'grey.300',
-            borderRadius: 3,
-            transition: 'all 0.2s',
-            bgcolor: 'grey.50',
+            borderRadius: 4,
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            bgcolor: 'white',
             '&:hover': {
               borderColor: 'primary.main',
-              bgcolor: 'action.hover',
+              bgcolor: 'primary.50',
+              transform: 'translateY(-2px)',
+              boxShadow: '0 12px 20px -10px rgba(37, 99, 235, 0.15)',
             },
-            p: { xs: 2, sm: 3 },
+            p: { xs: 3, sm: 4 },
             textAlign: 'center',
             overflow: 'hidden'
           }}
         >
-          <CloudUpload sx={{ fontSize: { xs: 32, sm: 48 }, color: 'grey.400', mb: 1 }} />
-          <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 2, fontWeight: 500 }}>
+          <Box sx={{ 
+            width: 64, 
+            height: 64, 
+            borderRadius: '50%', 
+            bgcolor: 'primary.50', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            mb: 2,
+            color: 'primary.main'
+          }}>
+            <CloudUpload sx={{ fontSize: 32 }} />
+          </Box>
+          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700, color: '#1e293b' }}>
             Upload Room Photo
           </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 240, mx: 'auto' }}>
+            Choose a clear photo of your room for the best results
+          </Typography>
           
-          <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
             <Button
-              variant="outlined"
-              size="small"
+              variant="contained"
               component="label"
               startIcon={<PhotoLibrary />}
-              sx={{ borderRadius: 2, bgcolor: 'white' }}
+              sx={{ 
+                borderRadius: '10px', 
+                boxShadow: 'none',
+                px: 3,
+                '&:hover': { boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)' }
+              }}
             >
-              Gallery
+              Select Image
               <input
                 type="file"
                 hidden
@@ -78,12 +99,17 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
             
             <Button
               variant="outlined"
-              size="small"
               component="label"
               startIcon={<CameraAlt />}
-              sx={{ borderRadius: 2, bgcolor: 'white' }}
+              sx={{ 
+                borderRadius: '10px',
+                px: 3,
+                borderColor: 'grey.300',
+                color: 'text.primary',
+                '&:hover': { borderColor: 'primary.main', bgcolor: 'transparent' }
+              }}
             >
-              Camera
+              Take Photo
               <input
                 type="file"
                 hidden
@@ -93,13 +119,17 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
               />
             </Button>
           </Box>
-          
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: { xs: 'none', sm: 'block' } }}>
-            or drag and drop image here
-          </Typography>
         </Box>
       ) : (
-        <Box sx={{ position: 'relative', width: '100%', height: { xs: 250, sm: 320 }, borderRadius: 3, overflow: 'hidden', bgcolor: 'black' }}>
+        <Box sx={{ 
+          position: 'relative', 
+          width: '100%', 
+          height: { xs: 250, sm: 320 }, 
+          borderRadius: 4, 
+          overflow: 'hidden', 
+          bgcolor: '#0f172a',
+          boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'
+        }}>
           <img
             src={previewUrl}
             alt="Room preview"
@@ -109,13 +139,14 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
             onClick={onClear}
             sx={{
               position: 'absolute',
-              top: 8,
-              right: 8,
-              bgcolor: 'rgba(211, 47, 47, 0.9)',
+              top: 12,
+              right: 12,
+              bgcolor: 'rgba(0, 0, 0, 0.5)',
               color: 'white',
-              '&:hover': { bgcolor: 'error.dark' },
-              size: 'small'
+              backdropFilter: 'blur(10px)',
+              '&:hover': { bgcolor: 'rgba(211, 47, 47, 0.9)' },
             }}
+            size="small"
           >
             <Close fontSize="small" />
           </IconButton>
