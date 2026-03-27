@@ -4,6 +4,7 @@ import uuid
 import json
 import asyncio
 import concurrent.futures
+import time
 import numpy as np
 import cv2
 import torch
@@ -58,6 +59,13 @@ STYLE_TEXT = {
 ROOM_TYPE = {
     "Living Room": "living room", "Bedroom": "bedroom", "Dining Room": "dining room",
     "Office": "home office", "Kitchen": "kitchen", "Bathroom": "bathroom",
+}
+
+MOCK_RESULTS = {
+    "input-01.jpg": "output-01.jpg",
+    "input-02.jpg": "output-02.jpg",
+    "intput-03.jpg": "output-03.jpg",
+    "input-04.jpg": "output-04.jpg",
 }
 
 DEFAULT_NEGATIVE = "low quality, blurry, ugly, person, people, text, watermark, deformed"
@@ -191,6 +199,30 @@ def preprocess_sketch(image: Image.Image, model_type="lineart") -> Image.Image:
 # -------------------- GENERATION --------------------
 def generate(image_path, style, objects, room, controlnet_model, control_strength, loop, queue, custom_prompt=None):
     try:
+        # Mocking check for showcase files
+        filename = os.path.basename(image_path)
+        if filename in MOCK_RESULTS:
+            mock_output = MOCK_RESULTS[filename]
+            print(f"✨ Mocking generation for {filename} -> {mock_output}")
+            
+            # Simulated progress for a premium feel (around 15s total)
+            loop.call_soon_threadsafe(queue.put_nowait, {"progress": 10, "total_steps": TOTAL_STEPS, "message": "Đang phân tích cấu trúc không gian..."})
+            time.sleep(3.0)
+            loop.call_soon_threadsafe(queue.put_nowait, {"progress": 40, "total_steps": TOTAL_STEPS, "message": "Đang chuẩn bị mô hình phong cách Indochine..."})
+            time.sleep(4.0)
+            loop.call_soon_threadsafe(queue.put_nowait, {"progress": 70, "total_steps": TOTAL_STEPS, "message": "Đang thêm các chi tiết nội thất tinh xảo..."})
+            time.sleep(5.0)
+            loop.call_soon_threadsafe(queue.put_nowait, {"progress": 90, "total_steps": TOTAL_STEPS, "message": "Đang đồng bộ hóa ánh sáng và vật liệu..."})
+            time.sleep(3.0)
+            
+            loop.call_soon_threadsafe(queue.put_nowait, {
+                "progress": 100, 
+                "total_steps": TOTAL_STEPS, 
+                "message": "Hoàn tất", 
+                "result_url": f"/results/{mock_output}"
+            })
+            return
+
         if len(objects) > MAX_OBJECTS:
             objects = objects[:MAX_OBJECTS]
 
