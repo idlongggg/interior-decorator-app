@@ -7,9 +7,8 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import ImageUploader from '@/components/ImageUploader';
 import StyleSelector from '@/components/StyleSelector';
-import ObjectsChecklist from '@/components/ObjectsChecklist';
 import ImageComparison from '@/components/ImageComparison';
-import { Chair, CompareArrows } from '@mui/icons-material';
+import { CompareArrows } from '@mui/icons-material';
 
 const theme = createTheme({
   palette: {
@@ -50,7 +49,6 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedStyle, setSelectedStyle] = useState<string>('Modern');
-  const [selectedObjects, setSelectedObjects] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -97,7 +95,7 @@ export default function Home() {
       const generatePayload = {
         image_path: uploadData.image_path,
         style: selectedStyle,
-        objects: selectedObjects,
+        objects: [],
         room_type: null, // Let backend detect room type
         custom_prompt: selectedStyle === 'Custom' ? customPrompt : null,
       };
@@ -196,14 +194,6 @@ export default function Home() {
                 <StyleSelector 
                   selectedStyle={selectedStyle} 
                   onStyleSelect={setSelectedStyle} 
-                />
-
-                <Typography variant="h6" sx={{ mt: 4, mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Chair color="primary" /> 3. Add Furniture (Optional)
-                </Typography>
-                <ObjectsChecklist 
-                  selectedObjects={selectedObjects} 
-                  onObjectsChange={setSelectedObjects} 
                 />
 
                 {selectedStyle === 'Custom' && (

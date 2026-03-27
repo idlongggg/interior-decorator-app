@@ -13,7 +13,7 @@ const STYLES = [
   { id: 'Scandi', name: 'Scandinavian', desc: 'Cozy & Natural', img: '/styles/scandi.png' },
   { id: 'Indochine', name: 'Indochine', desc: 'Tropical & Dark', img: '/styles/indochine.png' },
   { id: 'Modern', name: 'Modern', desc: 'Sleek & Luxury', img: '/styles/modern.png' },
-  { id: 'Custom', name: 'Custom', desc: 'Your Own Style', img: '/styles/custom.png' },
+  { id: 'Custom', name: 'Custom', desc: 'Your Own Style', img: 'https://images.unsplash.com/photo-1594026112284-02bb6f3352fe?auto=format&fit=crop&w=400&q=80' },
 ];
 
 export default function StyleSelector({ selectedStyle, onStyleSelect }: StyleSelectorProps) {

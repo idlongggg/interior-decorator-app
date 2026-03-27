@@ -2,7 +2,7 @@
 
 import React, { useCallback } from 'react';
 import { Box, Typography, IconButton, Button } from '@mui/material';
-import { CloudUpload, Close, PhotoLibrary, CameraAlt } from '@mui/icons-material';
+import { CloudUpload, Close, PhotoLibrary } from '@mui/icons-material';
 
 interface ImageUploaderProps {
   onImageSelected: (file: File) => void;
@@ -94,28 +94,6 @@ export default function ImageUploader({ onImageSelected, previewUrl, onClear }: 
                 hidden
                 onChange={handleFileInput}
                 accept="image/*"
-              />
-            </Button>
-            
-            <Button
-              variant="outlined"
-              component="label"
-              startIcon={<CameraAlt />}
-              sx={{ 
-                borderRadius: '10px',
-                px: 3,
-                borderColor: 'grey.300',
-                color: 'text.primary',
-                '&:hover': { borderColor: 'primary.main', bgcolor: 'transparent' }
-              }}
-            >
-              Take Photo
-              <input
-                type="file"
-                hidden
-                onChange={handleFileInput}
-                accept="image/*"
-                capture="environment"
               />
             </Button>
           </Box>
