@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import cv2
 import torch
-from typing import List, Optional, Dict, Tuple, Any, Union
+from typing import Optional, List, Dict, Any
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,9 +21,9 @@ from diffusers import (
 )
 from diffusers.utils import load_image
 from transformers import (
-    DPTForDepthEstimation, 
+    DPTForDepthEstimation,
     DPTImageProcessor,
-    SegformerForSemanticSegmentation, 
+    SegformerForSemanticSegmentation,
     SegformerImageProcessor,
 )
 from scipy import ndimage
@@ -34,21 +34,21 @@ warnings.filterwarnings("ignore", message="NotOpenSSLWarning")
 # --- CONFIGURATION & CONSTANTS ---
 
 # ADE20K class indices for room regions
-ADE20K_FLOOR_IDX = 3       # "floor"
-ADE20K_WALL_IDX = 0        # "wall"
-ADE20K_CEILING_IDX = 5     # "ceiling"
-ADE20K_WINDOW_IDX = 8      # "windowpane"
-ADE20K_DOOR_IDX = 14       # "door"
-ADE20K_TABLE_IDX = 15      # "table"
-ADE20K_CHAIR_IDX = 19      # "chair"
-ADE20K_SOFA_IDX = 23       # "sofa"
-ADE20K_BED_IDX = 7         # "bed"
-ADE20K_CABINET_IDX = 10    # "cabinet"
-ADE20K_SHELF_IDX = 24      # "shelf"
-ADE20K_CURTAIN_IDX = 18    # "curtain"
-ADE20K_RUG_IDX = 28        # "rug"
-ADE20K_LAMP_IDX = 36       # "lamp"
-ADE20K_PAINTING_IDX = 22   # "painting"
+ADE20K_FLOOR_IDX = 3
+ADE20K_WALL_IDX = 0
+ADE20K_CEILING_IDX = 5
+ADE20K_WINDOW_IDX = 8
+ADE20K_DOOR_IDX = 14
+ADE20K_TABLE_IDX = 15
+ADE20K_CHAIR_IDX = 19
+ADE20K_SOFA_IDX = 23
+ADE20K_BED_IDX = 7
+ADE20K_CABINET_IDX = 10
+ADE20K_SHELF_IDX = 24
+ADE20K_CURTAIN_IDX = 18
+ADE20K_RUG_IDX = 28
+ADE20K_LAMP_IDX = 36
+ADE20K_PAINTING_IDX = 22
 
 # Object -> preferred surface mapping
 OBJECT_SURFACE_MAP = {
@@ -180,12 +180,22 @@ OBJECT_SIZE_RATIO = {
 # --- DEVICE & GLOBALS ---
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
-else:
-    device = "cpu"
+
+def get_device_and_dtype():
+    """
+    Returns (device, torch_dtype) based on available hardware.
+    - CUDA: float16
+    - MPS: float32 (due to MPS float16 instability)
+    - CPU: float32
+    """
+    if torch.cuda.is_available():
+        return "cuda", torch.float16
+    elif torch.backends.mps.is_available():
+        return "mps", torch.float32
+    else:
+        return "cpu", torch.float32
+
+device, model_dtype = get_device_and_dtype()
 
 # Global model references
 pipe = None
@@ -226,10 +236,9 @@ def load_ai_models():
     global pipe
     if pipe is not None:
         return
-    print(f"[AI Engine] Using device: {device}")
+    print(f"[AI Engine] Using device: {device}, dtype: {model_dtype}")
     print("[AI Engine] Loading models (SD 1.5 + ControlNet Canny)...")
     try:
-        model_dtype = torch.float32 if device == "mps" else torch.float16
         controlnet = ControlNetModel.from_pretrained(
             "lllyasviel/sd-controlnet-canny", torch_dtype=model_dtype
         )
@@ -244,13 +253,13 @@ def load_ai_models():
         pipe.to(device)
         pipe.enable_attention_slicing()
         pipe.enable_vae_slicing()
-        print(f"[AI Engine] Models loaded successfully using {model_dtype}.")
+        print("[AI Engine] Models loaded successfully.")
     except Exception as e:
         print(f"[AI Engine] Failed to load models: {e}")
         traceback.print_exc()
         raise e
 
-# --- UTILITY MODULE FUNCTIONS ---
+# --- UTILITY FUNCTIONS ---
 
 def estimate_depth(image: Image.Image) -> Image.Image:
     load_depth_model()
@@ -312,12 +321,11 @@ def generate_interior(
 ) -> str:
     with generation_lock:
         try:
-            # For now, we still use the basic logic but we can integrate the more advanced prompt builder
             prompt_data = build_prompt(style, [], room_type, custom_prompt)
             prompt = prompt_data["prompt"]
             negative_prompt = prompt_data["negative_prompt"]
 
-            # Style-specific params (mapping from prompt_builder.py)
+            # Style-specific parameters
             style_params = {
                 "Minimalist": {"gs": 7.5, "steps": 35},
                 "Scandi": {"gs": 8.5, "steps": 40},
@@ -332,7 +340,8 @@ def generate_interior(
 
             print(f"[AI Engine] Running inference for {image_path}")
             load_ai_models()
-            if pipe is None: raise RuntimeError("AI Models not initialized.")
+            if pipe is None:
+                raise RuntimeError("AI Models not initialized.")
 
             image = load_image(image_path).convert("RGB")
             max_size = 768
@@ -351,9 +360,10 @@ def generate_interior(
             canny_image = Image.fromarray(image_canny)
 
             generator = torch.Generator(device=device).manual_seed(42)
+            # Reset scheduler internal state if needed (DPMSolverMultistepScheduler)
             if hasattr(pipe.scheduler, "model_outputs"):
                 pipe.scheduler.model_outputs = [None] * pipe.scheduler.config.solver_order
-            
+
             output = pipe(
                 prompt, image=canny_image, negative_prompt=negative_prompt,
                 num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
@@ -367,7 +377,8 @@ def generate_interior(
             return result_path
         except Exception as e:
             traceback.print_exc()
-            with open("error_log.txt", "w") as f: f.write(traceback.format_exc())
+            with open("error_log.txt", "w") as f:
+                f.write(traceback.format_exc())
             raise e
 
 # --- FASTAPI APP ---
@@ -430,7 +441,8 @@ async def generate_image(request: GenerateRequest, background_tasks: BackgroundT
 
 @app.get("/status/{task_id}")
 async def get_task_status(task_id: str):
-    if task_id not in tasks: raise HTTPException(status_code=404, detail="Task not found")
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
     task = tasks[task_id]
     elapsed = time.time() - task["start_time"]
     total_steps, progress = task["total_steps"], task["progress"]
@@ -449,7 +461,8 @@ async def get_task_status(task_id: str):
 @app.get("/results/{filename}")
 async def get_result(filename: str):
     file_path = f"results/{filename}"
-    if os.path.exists(file_path): return FileResponse(file_path)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="File not found")
 
 if __name__ == "__main__":
