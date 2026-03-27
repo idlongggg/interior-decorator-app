@@ -49,6 +49,9 @@ ADE20K_CURTAIN_IDX = 18
 ADE20K_RUG_IDX = 28
 ADE20K_LAMP_IDX = 36
 ADE20K_PAINTING_IDX = 22
+ADE20K_SINK_IDX = 26          # sink index in ADE20K
+ADE20K_TOILET_IDX = 27        # toilet index
+ADE20K_DESK_IDX = 34          # desk index
 
 # Object -> preferred surface mapping
 OBJECT_SURFACE_MAP = {
@@ -314,14 +317,65 @@ def get_room_segments(image: Image.Image) -> Dict[str, np.ndarray]:
     ceiling_mask = (seg_map == ADE20K_CEILING_IDX).astype(np.uint8)
     return {"floor": floor_mask, "wall": wall_mask, "ceiling": ceiling_mask, "full_segmap": seg_map}
 
+def detect_room_type(seg_map: np.ndarray) -> str:
+    """
+    Phân loại phòng dựa trên segmentation map (ADE20K indices).
+    Trả về một trong các giá trị: "Living Room", "Bedroom", "Dining Room",
+    "Kitchen", "Bathroom", "Office", "Studio"
+    """
+    # Đếm số pixel thuộc các class đặc trưng
+    bed_pixels = np.sum(seg_map == ADE20K_BED_IDX)
+    sofa_pixels = np.sum(seg_map == ADE20K_SOFA_IDX)
+    dining_table_pixels = np.sum(seg_map == ADE20K_TABLE_IDX)  # table in ADE20K includes dining table
+    chair_pixels = np.sum(seg_map == ADE20K_CHAIR_IDX)
+    cabinet_pixels = np.sum(seg_map == ADE20K_CABINET_IDX)
+    sink_pixels = np.sum(seg_map == ADE20K_SINK_IDX)
+    toilet_pixels = np.sum(seg_map == ADE20K_TOILET_IDX)
+    desk_pixels = np.sum(seg_map == ADE20K_DESK_IDX)
+
+    total_pixels = seg_map.size
+
+    # Thresholds (can be adjusted)
+    if bed_pixels / total_pixels > 0.05:
+        return "Bedroom"
+    if sofa_pixels / total_pixels > 0.05:
+        return "Living Room"
+    if dining_table_pixels / total_pixels > 0.03:
+        return "Dining Room"
+    if cabinet_pixels / total_pixels > 0.05 or sink_pixels / total_pixels > 0.02:
+        return "Kitchen"
+    if toilet_pixels / total_pixels > 0.02:
+        return "Bathroom"
+    if desk_pixels / total_pixels > 0.03:
+        return "Office"
+    # Default
+    return "Living Room"
+
 # --- INFERENCE LOGIC ---
 
 def generate_interior(
-    image_path: str, style: str, room_type: str, custom_prompt: Optional[str] = None, progress_callback: Optional[Any] = None
+    image_path: str,
+    style: str,
+    objects_list: List[str],
+    room_type: Optional[str] = None,
+    custom_prompt: Optional[str] = None,
+    progress_callback: Optional[Any] = None
 ) -> str:
     with generation_lock:
         try:
-            prompt_data = build_prompt(style, [], room_type, custom_prompt)
+            # If room_type not provided, detect it using segmentation
+            if room_type is None:
+                # Load segmentation model if not already loaded
+                load_segmentation_model()
+                # Load image for detection
+                image_for_detect = load_image(image_path).convert("RGB")
+                seg_dict = get_room_segments(image_for_detect)
+                seg_map = seg_dict["full_segmap"]
+                room_type = detect_room_type(seg_map)
+                print(f"[Detect] Detected room type: {room_type}")
+
+            # Build prompt with objects and room type
+            prompt_data = build_prompt(style, objects_list, room_type, custom_prompt)
             prompt = prompt_data["prompt"]
             negative_prompt = prompt_data["negative_prompt"]
 
@@ -399,7 +453,8 @@ os.makedirs("results", exist_ok=True)
 class GenerateRequest(BaseModel):
     image_path: str
     style: str
-    room_type: str
+    objects: List[str] = []                    # Danh sách object muốn thêm
+    room_type: Optional[str] = None            # Nếu None sẽ tự động detect
     custom_prompt: Optional[str] = None
 
 @app.get("/")
@@ -429,7 +484,9 @@ async def generate_image(request: GenerateRequest, background_tasks: BackgroundT
         tasks[task_id]["progress"] = step
     def run_generation_task(t_id: str, req: GenerateRequest):
         try:
-            result_path = generate_interior(req.image_path, req.style, req.room_type, req.custom_prompt, progress_callback=progress_callback)
+            result_path = generate_interior(
+                req.image_path, req.style, req.objects, req.room_type, req.custom_prompt, progress_callback
+            )
             tasks[t_id]["status"] = "completed"
             tasks[t_id]["progress"] = 100
             tasks[t_id]["result_url"] = f"/results/{os.path.basename(result_path)}"

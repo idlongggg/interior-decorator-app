@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Card } from '@heroui/react';
+import { Box, Typography, Chip } from '@mui/material';
 
 interface ObjectItem {
   id: string;
@@ -66,47 +66,53 @@ export default function ObjectsChecklist({
   };
 
   return (
-    <div className="mt-2 space-y-3">
+    <Box sx={{ mt: 2 }}>
       {OBJECT_GROUPS.map((group) => (
-        <div key={group.label}>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-default-400 mb-1.5">
+        <Box key={group.label} sx={{ mb: 1.5 }}>
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              fontWeight: 700, 
+              color: 'text.secondary', 
+              display: 'block', 
+              mb: 0.5,
+              textTransform: 'uppercase',
+              letterSpacing: 0.5
+            }}
+          >
             {group.label}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
             {group.items.map((item) => {
               const isSelected = selectedObjects.includes(item.id);
               return (
-                <button
+                <Chip
                   key={item.id}
-                  type="button"
+                  label={`${item.icon} ${item.name}`}
                   onClick={() => toggleObject(item.id)}
-                  className="border-0 p-0 bg-transparent"
-                >
-                  <Card
-                    className={`
-                      px-2.5 py-1.5 cursor-pointer select-none transition-all duration-200 
-                      flex flex-row items-center gap-1.5 text-xs font-medium
-                      ${
-                        isSelected
-                          ? 'bg-primary/10 border-2 border-primary text-primary shadow-sm shadow-primary/20 scale-[1.02]'
-                          : 'bg-default-50 border-2 border-transparent text-default-600 hover:bg-default-100 hover:scale-[1.02]'
-                      }
-                    `}
-                  >
-                    <span className="text-sm leading-none">{item.icon}</span>
-                    <span className="whitespace-nowrap">{item.name}</span>
-                  </Card>
-                </button>
+                  color={isSelected ? 'primary' : 'default'}
+                  variant={isSelected ? 'filled' : 'outlined'}
+                  size="small"
+                  sx={{ 
+                    cursor: 'pointer',
+                    borderRadius: '8px',
+                    transition: 'all 0.2s',
+                    '&:hover': { 
+                      transform: 'scale(1.05)',
+                      backgroundColor: isSelected ? 'primary.main' : 'rgba(0, 0, 0, 0.04)'
+                    }
+                  }}
+                />
               );
             })}
-          </div>
-        </div>
+          </Box>
+        </Box>
       ))}
       {selectedObjects.length > 0 && (
-        <p className="text-[10px] text-default-400 font-medium mt-1">
-          {selectedObjects.length} item{selectedObjects.length > 1 ? 's' : ''} selected
-        </p>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+          {selectedObjects.length} items selected for addition
+        </Typography>
       )}
-    </div>
+    </Box>
   );
 }
