@@ -1,7 +1,6 @@
 import os
 import shutil
 import uuid
-import time
 import numpy as np
 import cv2
 import torch
@@ -69,10 +68,10 @@ OBJECT_SIZE = {
 }
 
 # Cấu hình tối ưu tốc độ
-MAX_OBJECTS = 3                    # Giới hạn số object
-IMAGE_MAX_SIZE = 640               # Giảm kích thước ảnh để tăng tốc
-CONTROLNET_STEPS = 20              # Giảm steps từ 35 xuống 20
-INPAINT_STEPS = 15                 # Giảm steps từ 25 xuống 15
+MAX_OBJECTS = 3
+IMAGE_MAX_SIZE = 640
+CONTROLNET_STEPS = 20
+INPAINT_STEPS = 15
 
 # -------------------- DEVICE --------------------
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -168,23 +167,35 @@ def random_mask(surface_mask, obj_name):
     mask[y1:y2, x1:x2] = 255
     return mask
 
-def preprocess_sketch(image: Image.Image) -> Image.Image:
-    """Chuyển sketch thành lineart phù hợp với ControlNet lineart."""
-    # Chuyển sang grayscale
+def preprocess_sketch(image: Image.Image, model_type="lineart") -> Image.Image:
+    """Chuyển sketch thành lineart hoặc scribble tùy theo model."""
     gray = np.array(image.convert("L"))
-    # Nếu nền tối hơn nét, đảo ngược màu (giả sử sketch có nền trắng, nét đen)
+    # Đảo ngược nếu nền tối hơn nét
     if np.mean(gray) < 127:
         gray = 255 - gray
-    # Làm sạch nhiễu, làm mịn nét
-    blurred = cv2.medianBlur(gray, 3)
-    _, binary = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY)
-    # Tạo lineart: nền trắng, nét đen
-    lineart = Image.fromarray(binary).convert("RGB")
-    return lineart
+
+    if model_type == "lineart":
+        # Làm mịn, đóng lỗ hổng, ngưỡng thích ứng
+        blurred = cv2.medianBlur(gray, 5)
+        # Ngưỡng thích ứng (phù hợp với nét không đều)
+        binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY, 11, 2)
+        # Đóng lỗ hổng nhỏ
+        kernel = np.ones((2,2), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Làm mịn lần nữa
+        binary = cv2.medianBlur(binary, 3)
+        result = Image.fromarray(binary).convert("RGB")
+    else:  # scribble
+        # Giữ nét mờ, không nhị phân hóa mạnh
+        blurred = cv2.GaussianBlur(gray, (3,3), 0)
+        # Giảm độ tương phản để giữ nét mờ
+        result = Image.fromarray(blurred).convert("RGB")
+    return result
 
 # -------------------- GENERATION --------------------
-def generate(image_path, style, objects, room=None, is_sketch=False):
-    # Giới hạn số object (nếu cần)
+def generate(image_path, style, objects, room=None, controlnet_model="canny", control_strength=0.8):
+    # Giới hạn số object
     if len(objects) > MAX_OBJECTS:
         objects = objects[:MAX_OBJECTS]
 
@@ -200,25 +211,24 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
     # Xác định loại phòng
     room_name = ROOM_TYPE.get(room, "room") if room else "room"
 
-    # Prompt cho base image
+    # Xây dựng prompt
     if not objects:
-        prompt = f"{STYLE_TEXT[style]} {room_name} interior, empty room. High quality photograph."
+        base_prompt = f"{STYLE_TEXT[style]} {room_name} interior, empty room. High quality photograph."
     else:
         obj_list = [OBJECT_DESC[o] for o in objects]
-        prompt = f"{STYLE_TEXT[style]} featuring {', '.join(obj_list)}. High quality interior photograph."
+        base_prompt = f"{STYLE_TEXT[style]} featuring {', '.join(obj_list)}. High quality interior photograph."
 
-    # Điều chỉnh prompt nếu là sketch để tăng độ bám sát
-    if is_sketch:
-        prompt = f"{STYLE_TEXT[style]} {room_name} interior, based on a line drawing. " + prompt
-
-    # --- Chuẩn bị ảnh điều khiển cho ControlNet ---
-    if is_sketch:
-        # Dùng lineart controlnet
-        load_controlnet("lineart")
-        control_img = preprocess_sketch(img)  # chuyển thành lineart
+    # Thêm từ khóa sketch nếu dùng controlnet sketch/lineart
+    if controlnet_model in ["lineart", "scribble"]:
+        prompt = f"{STYLE_TEXT[style]} {room_name} interior, line art, sketch. {base_prompt}"
     else:
-        # Dùng canny cho ảnh thật
-        load_controlnet("canny")
+        prompt = base_prompt
+
+    # --- Chuẩn bị ảnh điều khiển ---
+    load_controlnet(controlnet_model)
+    if controlnet_model in ["lineart", "scribble"]:
+        control_img = preprocess_sketch(img, controlnet_model)
+    else:  # canny
         np_img = np.array(img)
         canny = cv2.Canny(np_img, 100, 200)[:, :, None]
         canny = np.concatenate([canny, canny, canny], axis=2)
@@ -227,7 +237,10 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
     generator = torch.Generator(device=device).manual_seed(42)
     base = controlnet_pipe(
         prompt, image=control_img, negative_prompt=DEFAULT_NEGATIVE,
-        num_inference_steps=CONTROLNET_STEPS, guidance_scale=7.5, generator=generator
+        num_inference_steps=CONTROLNET_STEPS,
+        guidance_scale=7.5,
+        controlnet_conditioning_scale=control_strength,
+        generator=generator
     ).images[0]
 
     if not objects:
@@ -235,10 +248,8 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
         base.save(out_path)
         return out_path
 
-    # --- Segmentation để lấy mask các bề mặt ---
+    # --- Segmentation và inpainting (giữ nguyên) ---
     seg = get_segmentation(base)
-
-    # --- Tạo mask cho từng object ---
     masks = []
     failed_objects = []
     for obj in objects:
@@ -249,9 +260,8 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
             failed_objects.append(obj)
             continue
 
-        # Thử tìm vị trí đặt object (có thể thử nhiều lần nếu cần)
         mask = None
-        for attempt in range(3):  # thử tối đa 3 lần
+        for attempt in range(3):
             mask = random_mask(surf_mask, obj)
             if mask is not None and np.sum(mask) > 0:
                 break
@@ -261,25 +271,17 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
             continue
 
         masks.append(mask)
-        # (Tuỳ chọn) Loại bỏ vùng vừa dùng khỏi surface_mask để tránh chồng lấn
-        # surf_mask = surf_mask & (mask == 0)  # cần chuyển mask về bool
 
-    # Nếu không có object nào được tạo mask, trả về base
     if not masks:
-        print("⚠️ No objects were placed, returning base image")
         out_path = f"results/generated_{os.path.basename(image_path)}"
         base.save(out_path)
         return out_path
 
-    # Kết hợp các mask
     combined_mask = np.zeros((h, w), dtype=np.uint8)
     for m in masks:
         combined_mask = np.maximum(combined_mask, m)
 
-    # --- Inpainting để thêm object ---
     load_inpaint()
-
-    # Prompt inpainting với thông tin bề mặt
     surface_hints = []
     for obj in objects:
         if obj in failed_objects:
@@ -307,7 +309,6 @@ def generate(image_path, style, objects, room=None, is_sketch=False):
         guidance_scale=7.5,
     ).images[0]
 
-    # --- Lưu kết quả ---
     out_path = f"results/generated_{os.path.basename(image_path)}"
     result.save(out_path)
     print(f"✅ Generated with objects: {', '.join([o for o in objects if o not in failed_objects])}")
@@ -328,8 +329,9 @@ class GenReq(BaseModel):
     style: str
     objects: List[str] = []
     room_type: Optional[str] = None
-    custom_prompt: Optional[str] = None  # chưa sử dụng nhưng giữ để tương thích
-    is_sketch: bool = False              # <-- Thêm trường này
+    custom_prompt: Optional[str] = None
+    controlnet_model: str = "canny"           # "canny", "lineart", "scribble"
+    control_strength: float = 0.8             # 0.0 -> 1.0, mức độ ảnh hưởng của sketch
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
@@ -346,7 +348,14 @@ async def gen(req: GenReq, background: BackgroundTasks):
     tasks[tid] = {"status": "processing", "result": None, "error": None}
     def run():
         try:
-            out = generate(req.image_path, req.style, req.objects, req.room_type, req.is_sketch)
+            out = generate(
+                req.image_path,
+                req.style,
+                req.objects,
+                req.room_type,
+                req.controlnet_model,
+                req.control_strength
+            )
             tasks[tid]["status"] = "completed"
             tasks[tid]["result"] = f"/results/{os.path.basename(out)}"
         except Exception as e:
