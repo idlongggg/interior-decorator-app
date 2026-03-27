@@ -89,15 +89,24 @@ device, dtype = get_device()
 
 # -------------------- MODELS --------------------
 controlnet_pipe = None
+controlnet_type = None
 inpaint_pipe = None
 seg_model = None
 seg_processor = None
 
-def load_controlnet():
-    global controlnet_pipe
-    if controlnet_pipe is not None:
+def load_controlnet(model_type="canny"):
+    global controlnet_pipe, controlnet_type
+    if controlnet_pipe is not None and controlnet_type == model_type:
         return
-    controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=dtype)
+    controlnet_type = model_type
+    if model_type == "canny":
+        controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=dtype)
+    elif model_type == "lineart":
+        controlnet = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_lineart", torch_dtype=dtype)
+    elif model_type == "scribble":
+        controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-scribble", torch_dtype=dtype)
+    else:
+        raise ValueError("Unsupported ControlNet type")
     controlnet_pipe = StableDiffusionControlNetPipeline.from_pretrained(
         "runwayml/stable-diffusion-v1-5", controlnet=controlnet, torch_dtype=dtype
     )
@@ -105,7 +114,7 @@ def load_controlnet():
     controlnet_pipe.scheduler = DPMSolverMultistepScheduler.from_config(controlnet_pipe.scheduler.config)
     controlnet_pipe.to(device)
     controlnet_pipe.enable_attention_slicing()
-    controlnet_pipe.enable_vae_slicing()  # Thêm để giảm VRAM
+    controlnet_pipe.enable_vae_slicing()
 
 def load_inpaint():
     global inpaint_pipe
@@ -118,7 +127,7 @@ def load_inpaint():
     inpaint_pipe.scheduler = DPMSolverMultistepScheduler.from_config(inpaint_pipe.scheduler.config)
     inpaint_pipe.to(device)
     inpaint_pipe.enable_attention_slicing()
-    inpaint_pipe.enable_vae_slicing()  # Thêm để giảm VRAM
+    inpaint_pipe.enable_vae_slicing()
 
 def load_segmentation():
     global seg_model, seg_processor
@@ -159,30 +168,37 @@ def random_mask(surface_mask, obj_name):
     mask[y1:y2, x1:x2] = 255
     return mask
 
-# Hàm add_object đã được gộp trong generate, không cần dùng riêng
-# def add_object(...) - bỏ
+def preprocess_sketch(image: Image.Image) -> Image.Image:
+    """Chuyển sketch thành lineart phù hợp với ControlNet lineart."""
+    # Chuyển sang grayscale
+    gray = np.array(image.convert("L"))
+    # Nếu nền tối hơn nét, đảo ngược màu (giả sử sketch có nền trắng, nét đen)
+    if np.mean(gray) < 127:
+        gray = 255 - gray
+    # Làm sạch nhiễu, làm mịn nét
+    blurred = cv2.medianBlur(gray, 3)
+    _, binary = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY)
+    # Tạo lineart: nền trắng, nét đen
+    lineart = Image.fromarray(binary).convert("RGB")
+    return lineart
 
 # -------------------- GENERATION --------------------
-def generate(image_path, style, objects, room=None):
-    # Giới hạn số object
+def generate(image_path, style, objects, room=None, is_sketch=False):
+    # Giới hạn số object (nếu cần)
     if len(objects) > MAX_OBJECTS:
         objects = objects[:MAX_OBJECTS]
 
-    # Load base image
+    # Load và resize ảnh
     img = load_image(image_path).convert("RGB")
     w, h = img.size
-    # Resize về kích thước tối đa IMAGE_MAX_SIZE
     if max(w, h) > IMAGE_MAX_SIZE:
         scale = IMAGE_MAX_SIZE / max(w, h)
         w, h = int(w * scale), int(h * scale)
-    # Đảm bảo chia hết cho 8
     w, h = (w // 8) * 8, (h // 8) * 8
     img = img.resize((w, h), Image.LANCZOS)
 
-    # Room type
-    if room is None:
-        room = "Living Room"
-    room_name = ROOM_TYPE.get(room, "room")
+    # Xác định loại phòng
+    room_name = ROOM_TYPE.get(room, "room") if room else "room"
 
     # Prompt cho base image
     if not objects:
@@ -191,54 +207,97 @@ def generate(image_path, style, objects, room=None):
         obj_list = [OBJECT_DESC[o] for o in objects]
         prompt = f"{STYLE_TEXT[style]} featuring {', '.join(obj_list)}. High quality interior photograph."
 
-    # ControlNet
-    load_controlnet()
-    np_img = np.array(img)
-    canny = cv2.Canny(np_img, 100, 200)[:, :, None]
-    canny = np.concatenate([canny, canny, canny], axis=2)
-    canny_img = Image.fromarray(canny)
+    # Điều chỉnh prompt nếu là sketch để tăng độ bám sát
+    if is_sketch:
+        prompt = f"{STYLE_TEXT[style]} {room_name} interior, based on a line drawing. " + prompt
 
-    gen = torch.Generator(device=device).manual_seed(42)
+    # --- Chuẩn bị ảnh điều khiển cho ControlNet ---
+    if is_sketch:
+        # Dùng lineart controlnet
+        load_controlnet("lineart")
+        control_img = preprocess_sketch(img)  # chuyển thành lineart
+    else:
+        # Dùng canny cho ảnh thật
+        load_controlnet("canny")
+        np_img = np.array(img)
+        canny = cv2.Canny(np_img, 100, 200)[:, :, None]
+        canny = np.concatenate([canny, canny, canny], axis=2)
+        control_img = Image.fromarray(canny)
 
-    # Sinh base image với số bước giảm
+    generator = torch.Generator(device=device).manual_seed(42)
     base = controlnet_pipe(
-        prompt, image=canny_img, negative_prompt=DEFAULT_NEGATIVE,
-        num_inference_steps=CONTROLNET_STEPS, guidance_scale=7.5, generator=gen
+        prompt, image=control_img, negative_prompt=DEFAULT_NEGATIVE,
+        num_inference_steps=CONTROLNET_STEPS, guidance_scale=7.5, generator=generator
     ).images[0]
 
-    # Nếu không có object, trả về luôn
     if not objects:
         out_path = f"results/generated_{os.path.basename(image_path)}"
         base.save(out_path)
         return out_path
 
-    # Segmentation một lần
+    # --- Segmentation để lấy mask các bề mặt ---
     seg = get_segmentation(base)
 
-    # Tạo mask tổng hợp
-    combined_mask = np.zeros((h, w), dtype=np.uint8)
+    # --- Tạo mask cho từng object ---
+    masks = []
+    failed_objects = []
     for obj in objects:
         surface = OBJECT_SURFACE.get(obj, "floor")
         surf_mask = seg.get(surface, np.zeros_like(seg["floor"]))
         if np.sum(surf_mask) == 0:
             print(f"⚠️ No {surface} detected for {obj}, skip")
+            failed_objects.append(obj)
             continue
-        mask = random_mask(surf_mask, obj)
-        if mask is None:
-            print(f"⚠️ No region for {obj}, skip")
-            continue
-        combined_mask = np.maximum(combined_mask, mask)
 
-    # Nếu không có mask, trả về base
-    if np.sum(combined_mask) == 0:
+        # Thử tìm vị trí đặt object (có thể thử nhiều lần nếu cần)
+        mask = None
+        for attempt in range(3):  # thử tối đa 3 lần
+            mask = random_mask(surf_mask, obj)
+            if mask is not None and np.sum(mask) > 0:
+                break
+        if mask is None:
+            print(f"⚠️ Could not find valid region for {obj}, skip")
+            failed_objects.append(obj)
+            continue
+
+        masks.append(mask)
+        # (Tuỳ chọn) Loại bỏ vùng vừa dùng khỏi surface_mask để tránh chồng lấn
+        # surf_mask = surf_mask & (mask == 0)  # cần chuyển mask về bool
+
+    # Nếu không có object nào được tạo mask, trả về base
+    if not masks:
+        print("⚠️ No objects were placed, returning base image")
         out_path = f"results/generated_{os.path.basename(image_path)}"
         base.save(out_path)
         return out_path
 
-    # Inpainting một lần
+    # Kết hợp các mask
+    combined_mask = np.zeros((h, w), dtype=np.uint8)
+    for m in masks:
+        combined_mask = np.maximum(combined_mask, m)
+
+    # --- Inpainting để thêm object ---
     load_inpaint()
-    prompt_inpaint = f"{', '.join([OBJECT_DESC[o] for o in objects])} in a {room_name}, {STYLE_TEXT[style]} Photorealistic."
+
+    # Prompt inpainting với thông tin bề mặt
+    surface_hints = []
+    for obj in objects:
+        if obj in failed_objects:
+            continue
+        surface = OBJECT_SURFACE.get(obj, "floor")
+        desc = OBJECT_DESC[obj]
+        if surface == "floor":
+            surface_hints.append(f"{desc} on the floor")
+        elif surface == "wall":
+            surface_hints.append(f"{desc} on the wall")
+        elif surface == "ceiling":
+            surface_hints.append(f"{desc} on the ceiling")
+        else:
+            surface_hints.append(desc)
+
+    prompt_inpaint = f"{', '.join(surface_hints)} in a {room_name}, {STYLE_TEXT[style]}. Photorealistic."
     mask_img = Image.fromarray(combined_mask).convert("L")
+
     result = inpaint_pipe(
         prompt=prompt_inpaint,
         image=base,
@@ -248,8 +307,12 @@ def generate(image_path, style, objects, room=None):
         guidance_scale=7.5,
     ).images[0]
 
+    # --- Lưu kết quả ---
     out_path = f"results/generated_{os.path.basename(image_path)}"
     result.save(out_path)
+    print(f"✅ Generated with objects: {', '.join([o for o in objects if o not in failed_objects])}")
+    if failed_objects:
+        print(f"⚠️ Failed to place: {', '.join(failed_objects)}")
     return out_path
 
 # -------------------- API --------------------
@@ -266,6 +329,7 @@ class GenReq(BaseModel):
     objects: List[str] = []
     room_type: Optional[str] = None
     custom_prompt: Optional[str] = None  # chưa sử dụng nhưng giữ để tương thích
+    is_sketch: bool = False              # <-- Thêm trường này
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
@@ -282,7 +346,7 @@ async def gen(req: GenReq, background: BackgroundTasks):
     tasks[tid] = {"status": "processing", "result": None, "error": None}
     def run():
         try:
-            out = generate(req.image_path, req.style, req.objects, req.room_type)
+            out = generate(req.image_path, req.style, req.objects, req.room_type, req.is_sketch)
             tasks[tid]["status"] = "completed"
             tasks[tid]["result"] = f"/results/{os.path.basename(out)}"
         except Exception as e:
