@@ -83,7 +83,7 @@ MAX_OBJECTS = 3
 IMAGE_MAX_SIZE = 640
 CONTROLNET_STEPS = 20
 INPAINT_STEPS = 15
-TOTAL_STEPS = 40
+TOTAL_STEPS = 100
 
 # -------------------- DEVICE --------------------
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -250,11 +250,11 @@ def generate(image_path, style, objects, room, controlnet_model, control_strengt
         else:
             prompt = base_prompt
 
-        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 10, "total_steps": TOTAL_STEPS, "message": "Đang chuẩn bị ControlNet..."})
+        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 5, "total_steps": TOTAL_STEPS, "message": "Đang chuẩn bị hệ thống..."})
 
         load_controlnet(controlnet_model)
 
-        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 15, "total_steps": TOTAL_STEPS, "message": "Đang xử lý ảnh điều khiển..."})
+        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 10, "total_steps": TOTAL_STEPS, "message": "Đang xử lý ảnh điều khiển..."})
 
         if controlnet_model in ["lineart", "scribble"]:
             control_img = preprocess_sketch(img, controlnet_model)
@@ -264,7 +264,7 @@ def generate(image_path, style, objects, room, controlnet_model, control_strengt
             canny = np.concatenate([canny, canny, canny], axis=2)
             control_img = Image.fromarray(canny)
 
-        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 20, "total_steps": TOTAL_STEPS, "message": "Đang tạo ảnh nền với ControlNet..."})
+        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 20, "total_steps": TOTAL_STEPS, "message": "Đang tạo ảnh nền..."})
 
         generator = torch.Generator(device=device).manual_seed(42)
         base = controlnet_pipe(
@@ -275,7 +275,7 @@ def generate(image_path, style, objects, room, controlnet_model, control_strengt
             generator=generator
         ).images[0]
 
-        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 50, "total_steps": TOTAL_STEPS, "message": "Đã tạo ảnh nền, đang phân tích bề mặt..."})
+        loop.call_soon_threadsafe(queue.put_nowait, {"progress": 60, "total_steps": TOTAL_STEPS, "message": "Đã tạo ảnh nền, đang phân tích bề mặt..."})
 
         if not objects:
             out_path = f"results/generated_{os.path.basename(image_path)}"
