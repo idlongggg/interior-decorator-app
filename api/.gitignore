@@ -22,5 +22,6 @@ uploads/*
 !uploads/input-*
 results/*
 !results/.gitkeep
+!results/output-*
 
 venv/
