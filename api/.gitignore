@@ -19,6 +19,7 @@ error_log.txt
 # Data and results
 uploads/*
 !uploads/.gitkeep
+!uploads/input-*
 results/*
 !results/.gitkeep
 

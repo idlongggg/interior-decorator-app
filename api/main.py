@@ -64,7 +64,7 @@ ROOM_TYPE = {
 MOCK_RESULTS = {
     "input-01.jpg": "output-01.jpg",
     "input-02.jpg": "output-02.jpg",
-    "intput-03.jpg": "output-03.jpg",
+    "input-03.jpg": "output-03.jpg",
     "input-04.jpg": "output-04.jpg",
 }
 
